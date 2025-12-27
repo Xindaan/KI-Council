@@ -6,7 +6,7 @@ import urllib.parse
 import urllib.request
 from functools import lru_cache
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ki_council.config import get_setting, load_config
 
