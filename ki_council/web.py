@@ -1,11 +1,13 @@
 import argparse
 import html
+import json
 import os
 from string import Template
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 
+from ki_council.clients import load_clients
 from ki_council.council import build_judge_prompt, gather_responses, judge_responses
 from ki_council.config import CONFIG_ENV_VAR
 
@@ -51,6 +53,29 @@ PAGE_TEMPLATE = Template("""<!doctype html>
         box-shadow: 0 10px 30px rgba(20, 20, 20, 0.08);
         padding: 24px;
         margin-bottom: 24px;
+      }
+      .status {
+        margin-top: 16px;
+        padding: 12px 16px;
+        border-radius: 12px;
+        background: #eef3ff;
+        color: #1a3b8f;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .status .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #2f6fed;
+        animation: pulse 1.2s infinite ease-in-out;
+      }
+      @keyframes pulse {
+        0% { transform: scale(0.9); opacity: 0.6; }
+        50% { transform: scale(1.15); opacity: 1; }
+        100% { transform: scale(0.9); opacity: 0.6; }
       }
       .card article.card {
         margin-bottom: 16px;
@@ -100,6 +125,40 @@ PAGE_TEMPLATE = Template("""<!doctype html>
         border-radius: 12px;
         border: 1px solid #e4e6ef;
       }
+      .responses {
+        display: grid;
+        gap: 16px;
+      }
+      .response-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: #f1f5ff;
+        color: #1a3b8f;
+        font-weight: 600;
+        font-size: 0.85rem;
+      }
+      .model {
+        font-size: 0.9rem;
+        color: #5f6368;
+      }
+      details.prompt-details {
+        border-radius: 12px;
+        background: #f8f9fd;
+        padding: 12px 16px;
+      }
+      details.prompt-details[open] {
+        background: #eef1f8;
+      }
       summary {
         cursor: pointer;
         font-weight: 600;
@@ -126,6 +185,13 @@ PAGE_TEMPLATE = Template("""<!doctype html>
           background: #171a21;
           box-shadow: none;
         }
+        .status {
+          background: #1b243b;
+          color: #b9c7ff;
+        }
+        .status .dot {
+          background: #7aa2ff;
+        }
         .card article.card {
           border-color: #2a2f3a;
         }
@@ -135,6 +201,14 @@ PAGE_TEMPLATE = Template("""<!doctype html>
           background: #11131a;
           border-color: #2a2f3a;
           color: #f6f7fb;
+        }
+        .badge {
+          background: #1b243b;
+          color: #b9c7ff;
+        }
+        details.prompt-details,
+        details.prompt-details[open] {
+          background: #11131a;
         }
         .error {
           background: #2b1216;
@@ -162,15 +236,61 @@ PAGE_TEMPLATE = Template("""<!doctype html>
             <button type="submit">Antworten abrufen</button>
           </div>
         </form>
+        <div id="status" class="status" data-state="idle">
+          <span class="dot" aria-hidden="true"></span>
+          <span class="status-text">Bereit.</span>
+        </div>
       </section>
       $content
       <footer>
         Stelle sicher, dass API-Keys gesetzt sind (OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY).
       </footer>
     </main>
+    <script>
+      const form = document.querySelector("form");
+      const status = document.getElementById("status");
+      const statusText = status.querySelector(".status-text");
+      const models = $models_json;
+      let modelIndex = 0;
+      let intervalId = null;
+
+      const updateStatus = (text) => {
+        statusText.textContent = text;
+      };
+
+      const startSpinner = () => {
+        if (!models.length) {
+          updateStatus("Modelle werden befragt...");
+          return;
+        }
+        updateStatus(`Befrage: ${models[modelIndex]}`);
+        intervalId = window.setInterval(() => {
+          modelIndex = (modelIndex + 1) % models.length;
+          updateStatus(`Befrage: ${models[modelIndex]}`);
+        }, 1500);
+      };
+
+      form.addEventListener("submit", () => {
+        status.dataset.state = "loading";
+        modelIndex = 0;
+        startSpinner();
+      });
+
+      if (status.dataset.state === "idle") {
+        updateStatus("Bereit.");
+      }
+    </script>
   </body>
 </html>
 """)
+
+
+def _model_labels() -> list[str]:
+    labels = []
+    for client in load_clients():
+        provider = client.__class__.__name__.replace("Client", "").lower()
+        labels.append(f"{provider} · {client.model}")
+    return labels
 
 
 def _render_page(prompt: str, max_tokens: int, content: str) -> bytes:
@@ -178,6 +298,7 @@ def _render_page(prompt: str, max_tokens: int, content: str) -> bytes:
         prompt=html.escape(prompt or ""),
         max_tokens=max_tokens,
         content=content,
+        models_json=json.dumps(_model_labels(), ensure_ascii=False),
     )
     return html_page.encode("utf-8")
 
@@ -194,8 +315,10 @@ def _render_response_blocks(responses: list) -> str:
         content = html.escape(response.content)
         blocks.append(
             "<article class=\"card\">"
-            f"<h3>{provider}</h3>"
-            f"<p><strong>Modell:</strong> {model}</p>"
+            "<div class=\"response-header\">"
+            f"<span class=\"badge\">{provider}</span>"
+            f"<span class=\"model\">{model}</span>"
+            "</div>"
             f"<pre>{content}</pre>"
             "</article>"
         )
@@ -207,17 +330,18 @@ def _render_results(responses: list, comparison: str, judge_prompt: str) -> str:
     return (
         "<section class=\"card\">"
         "<h2>Antworten</h2>"
-        f"{responses_html}"
+        f"<div class=\"responses\">{responses_html}</div>"
+        "</section>"
+        "<section class=\"card\">"
+        "<h2>Bewertungs-Prompt</h2>"
+        "<details class=\"prompt-details\">"
+        "<summary>Prompt anzeigen</summary>"
+        f"<pre>{html.escape(judge_prompt)}</pre>"
+        "</details>"
         "</section>"
         "<section class=\"card\">"
         "<h2>Vergleich</h2>"
         f"<pre>{html.escape(comparison)}</pre>"
-        "</section>"
-        "<section class=\"card\">"
-        "<details>"
-        "<summary>Summarizing-Prompt</summary>"
-        f"<pre>{html.escape(judge_prompt)}</pre>"
-        "</details>"
         "</section>"
     )
 
