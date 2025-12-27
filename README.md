@@ -62,6 +62,12 @@ Oder als JSON-Ausgabe:
 python -m ki_council.cli "Dein Prompt hier" --json
 ```
 
+Konfigurations- und Diagnosetipps:
+
+```bash
+python -m ki_council.cli "Dein Prompt hier" --config /pfad/zur/.ki-council.json --debug
+```
+
 ## Hinweise
 
 - Für die Vergleichsanalyse wird standardmäßig OpenAI genutzt. Setze `JUDGE_API_KEY`, wenn du dafür einen separaten Key verwenden möchtest.

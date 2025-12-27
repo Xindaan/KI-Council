@@ -32,13 +32,15 @@ def _find_default_config_path() -> Optional[Path]:
     return None
 
 
-def load_config() -> Dict[str, Any]:
+def resolve_config_path() -> Optional[Path]:
     configured_path = os.getenv(CONFIG_ENV_VAR)
     if configured_path:
-        config_path = Path(configured_path).expanduser()
-    else:
-        config_path = _find_default_config_path()
+        return Path(configured_path).expanduser()
+    return _find_default_config_path()
 
+
+def load_config() -> Dict[str, Any]:
+    config_path = resolve_config_path()
     if not config_path:
         return {}
 
