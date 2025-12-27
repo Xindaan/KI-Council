@@ -38,9 +38,19 @@ def _post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> Di
 
 
 def normalize_base_url(base_url: str) -> str:
+    base_url = base_url.strip()
+    if not base_url:
+        raise LLMError("Invalid base URL: (empty)")
+    if base_url.startswith("http:") and not base_url.startswith("http://"):
+        base_url = base_url.replace("http:", "http://", 1)
+    if base_url.startswith("https:") and not base_url.startswith("https://"):
+        base_url = base_url.replace("https:", "https://", 1)
     parsed = urllib.parse.urlparse(base_url)
     if not parsed.scheme:
         base_url = f"https://{base_url}"
+        parsed = urllib.parse.urlparse(base_url)
+    if not parsed.path and parsed.netloc.endswith("v1") and not parsed.netloc.endswith(".v1"):
+        base_url = f"{parsed.scheme}://{parsed.netloc[:-2]}/v1"
         parsed = urllib.parse.urlparse(base_url)
     if not parsed.netloc:
         raise LLMError(f"Invalid base URL: {base_url}")
