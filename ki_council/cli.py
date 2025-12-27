@@ -1,8 +1,10 @@
 import argparse
 import json
+import os
 import sys
 
 from ki_council.council import gather_responses, judge_responses
+from ki_council.config import CONFIG_ENV_VAR
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,12 +21,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Output raw JSON instead of formatted text.",
     )
+    parser.add_argument(
+        "--config",
+        help="Path to a .ki-council.json file to use for this run.",
+    )
     return parser
 
 
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.config:
+        os.environ[CONFIG_ENV_VAR] = args.config
 
     responses = gather_responses(args.prompt, max_tokens=args.max_tokens)
     responses_text, judgment = judge_responses(args.prompt, responses)
