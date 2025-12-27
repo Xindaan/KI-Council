@@ -81,5 +81,5 @@ def judge_responses(prompt: str, responses: List[LLMResponse]) -> Tuple[str, str
 
     responses_text = format_responses(responses)
     judge_prompt = build_judge_prompt(prompt, responses_text)
-    result = judge_client.generate(judge_prompt, max_tokens=512)
+    result = judge_client.generate(judge_prompt, max_tokens=16384)
     return responses_text, result.content
