@@ -1,13 +1,12 @@
 import argparse
 import html
-import json
 import os
+import re
 from string import Template
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 
-from ki_council.clients import load_clients
 from ki_council.council import build_judge_prompt, gather_responses, judge_responses
 from ki_council.config import CONFIG_ENV_VAR
 
@@ -125,6 +124,24 @@ PAGE_TEMPLATE = Template("""<!doctype html>
         border-radius: 12px;
         border: 1px solid #e4e6ef;
       }
+      .markdown > *:first-child {
+        margin-top: 0;
+      }
+      .markdown > *:last-child {
+        margin-bottom: 0;
+      }
+      .markdown h2,
+      .markdown h3,
+      .markdown h4 {
+        margin-bottom: 8px;
+      }
+      .markdown p {
+        margin: 8px 0;
+      }
+      .markdown ul {
+        margin: 8px 0 8px 20px;
+        padding: 0;
+      }
       .responses {
         display: grid;
         gap: 16px;
@@ -236,9 +253,9 @@ PAGE_TEMPLATE = Template("""<!doctype html>
             <button type="submit">Antworten abrufen</button>
           </div>
         </form>
-        <div id="status" class="status" data-state="idle">
+        <div id="status" class="status" data-state="$status_state">
           <span class="dot" aria-hidden="true"></span>
-          <span class="status-text">Bereit.</span>
+          <span class="status-text">$status_text</span>
         </div>
       </section>
       $content
@@ -250,34 +267,22 @@ PAGE_TEMPLATE = Template("""<!doctype html>
       const form = document.querySelector("form");
       const status = document.getElementById("status");
       const statusText = status.querySelector(".status-text");
-      const models = $models_json;
-      let modelIndex = 0;
-      let intervalId = null;
 
       const updateStatus = (text) => {
         statusText.textContent = text;
       };
 
-      const startSpinner = () => {
-        if (!models.length) {
-          updateStatus("Modelle werden befragt...");
-          return;
-        }
-        updateStatus(`Befrage: ${models[modelIndex]}`);
-        intervalId = window.setInterval(() => {
-          modelIndex = (modelIndex + 1) % models.length;
-          updateStatus(`Befrage: ${models[modelIndex]}`);
-        }, 1500);
-      };
-
       form.addEventListener("submit", () => {
         status.dataset.state = "loading";
-        modelIndex = 0;
-        startSpinner();
+        updateStatus("Anfrage läuft...");
       });
 
       if (status.dataset.state === "idle") {
         updateStatus("Bereit.");
+      } else if (status.dataset.state === "done") {
+        updateStatus("Fertig.");
+      } else if (status.dataset.state === "error") {
+        updateStatus("Fehler bei der Anfrage.");
       }
     </script>
   </body>
@@ -293,18 +298,71 @@ def _model_labels() -> list[str]:
     return labels
 
 
-def _render_page(prompt: str, max_tokens: int, content: str) -> bytes:
+def _render_error(message: str) -> str:
+    return f'<section class="card"><div class="error">{html.escape(message)}</div></section>'
+
+
+def _render_markdown(text: str) -> str:
+    escaped = html.escape(text or "")
+    escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+    lines = escaped.splitlines()
+    html_lines = []
+    list_open = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if list_open:
+                html_lines.append("</ul>")
+                list_open = False
+            continue
+        if stripped.startswith("### "):
+            if list_open:
+                html_lines.append("</ul>")
+                list_open = False
+            html_lines.append(f"<h4>{stripped[4:]}</h4>")
+            continue
+        if stripped.startswith("## "):
+            if list_open:
+                html_lines.append("</ul>")
+                list_open = False
+            html_lines.append(f"<h3>{stripped[3:]}</h3>")
+            continue
+        if stripped.startswith("# "):
+            if list_open:
+                html_lines.append("</ul>")
+                list_open = False
+            html_lines.append(f"<h2>{stripped[2:]}</h2>")
+            continue
+        if stripped.startswith(("- ", "* ")):
+            if not list_open:
+                html_lines.append("<ul>")
+                list_open = True
+            html_lines.append(f"<li>{stripped[2:]}</li>")
+            continue
+        if list_open:
+            html_lines.append("</ul>")
+            list_open = False
+        html_lines.append(f"<p>{stripped}</p>")
+    if list_open:
+        html_lines.append("</ul>")
+    return "".join(html_lines)
+
+
+def _render_page(
+    prompt: str,
+    max_tokens: int,
+    content: str,
+    status_state: str = "idle",
+    status_text: str = "Bereit.",
+) -> bytes:
     html_page = PAGE_TEMPLATE.safe_substitute(
         prompt=html.escape(prompt or ""),
         max_tokens=max_tokens,
         content=content,
-        models_json=json.dumps(_model_labels(), ensure_ascii=False),
+        status_state=status_state,
+        status_text=html.escape(status_text),
     )
     return html_page.encode("utf-8")
-
-
-def _render_error(message: str) -> str:
-    return f'<section class="card"><div class="error">{html.escape(message)}</div></section>'
 
 
 def _render_response_blocks(responses: list) -> str:
@@ -312,14 +370,14 @@ def _render_response_blocks(responses: list) -> str:
     for response in responses:
         provider = html.escape(response.provider)
         model = html.escape(response.model)
-        content = html.escape(response.content)
+        content = _render_markdown(response.content)
         blocks.append(
             "<article class=\"card\">"
             "<div class=\"response-header\">"
             f"<span class=\"badge\">{provider}</span>"
             f"<span class=\"model\">{model}</span>"
             "</div>"
-            f"<pre>{content}</pre>"
+            f"<div class=\"markdown\">{content}</div>"
             "</article>"
         )
     return "".join(blocks)
@@ -327,6 +385,8 @@ def _render_response_blocks(responses: list) -> str:
 
 def _render_results(responses: list, comparison: str, judge_prompt: str) -> str:
     responses_html = _render_response_blocks(responses)
+    comparison_html = _render_markdown(comparison)
+    prompt_html = _render_markdown(judge_prompt)
     return (
         "<section class=\"card\">"
         "<h2>Antworten</h2>"
@@ -336,12 +396,12 @@ def _render_results(responses: list, comparison: str, judge_prompt: str) -> str:
         "<h2>Bewertungs-Prompt</h2>"
         "<details class=\"prompt-details\">"
         "<summary>Prompt anzeigen</summary>"
-        f"<pre>{html.escape(judge_prompt)}</pre>"
+        f"<div class=\"markdown\">{prompt_html}</div>"
         "</details>"
         "</section>"
         "<section class=\"card\">"
         "<h2>Vergleich</h2>"
-        f"<pre>{html.escape(comparison)}</pre>"
+        f"<div class=\"markdown\">{comparison_html}</div>"
         "</section>"
     )
 
@@ -372,7 +432,13 @@ class CouncilHandler(BaseHTTPRequestHandler):
             max_tokens = 2048
 
         if not prompt:
-            page = _render_page("", max_tokens, _render_error("Bitte einen Prompt eingeben."))
+            page = _render_page(
+                "",
+                max_tokens,
+                _render_error("Bitte einen Prompt eingeben."),
+                status_state="error",
+                status_text="Fehler bei der Anfrage.",
+            )
             self._send_page(page, HTTPStatus.BAD_REQUEST)
             return
 
@@ -381,10 +447,20 @@ class CouncilHandler(BaseHTTPRequestHandler):
             responses_text, judgment = judge_responses(prompt, responses)
             judge_prompt = build_judge_prompt(prompt, responses_text)
             content = _render_results(responses, judgment, judge_prompt)
+            status_state = "done"
+            status_text = "Fertig."
         except Exception as exc:  # noqa: BLE001
             content = _render_error(str(exc))
+            status_state = "error"
+            status_text = "Fehler bei der Anfrage."
 
-        page = _render_page(prompt, max_tokens, content)
+        page = _render_page(
+            prompt,
+            max_tokens,
+            content,
+            status_state=status_state,
+            status_text=status_text,
+        )
         self._send_page(page)
 
     def log_message(self, format: str, *args: object) -> None:
