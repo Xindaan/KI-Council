@@ -85,13 +85,25 @@ class OpenAIClient:
         self.model = model
         self.base_url = normalize_base_url(base_url).rstrip("/")
 
+    def _max_tokens_param(self) -> str:
+        config = load_config()
+        override = get_setting(
+            config, "OPENAI_MAX_TOKENS_PARAM", "openai_max_tokens_param"
+        )
+        if override:
+            return override
+        lower_model = self.model.lower()
+        if lower_model.startswith(("gpt-5", "o1", "o3")):
+            return "max_completion_tokens"
+        return "max_tokens"
+
     def generate(self, prompt: str, max_tokens: int = 512) -> LLMResponse:
         url = f"{self.base_url}/chat/completions"
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_tokens,
         }
+        payload[self._max_tokens_param()] = max_tokens
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
