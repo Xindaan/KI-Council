@@ -1,10 +1,15 @@
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 CONFIG_ENV_VAR = "KI_COUNCIL_CONFIG"
 DEFAULT_CONFIG_NAME = ".ki-council.json"
+
+
+_COMMENT_PATTERN = re.compile(r"(^\\s*(//|#).*$)|(/\\*.*?\\*/)", re.MULTILINE | re.DOTALL)
+_TRAILING_COMMA_PATTERN = re.compile(r",\\s*([}\\]])")
 
 
 def _find_default_config_path() -> Optional[Path]:
@@ -26,8 +31,10 @@ def load_config() -> Dict[str, Any]:
         return {}
 
     try:
-        raw = config_path.read_text(encoding="utf-8")
-        data = json.loads(raw)
+        raw = config_path.read_text(encoding="utf-8").lstrip("\ufeff")
+        sanitized = _COMMENT_PATTERN.sub("", raw)
+        sanitized = _TRAILING_COMMA_PATTERN.sub(r"\1", sanitized)
+        data = json.loads(sanitized)
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(
             f"Failed to read config file: {config_path} ({exc})"
