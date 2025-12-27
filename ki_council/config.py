@@ -66,11 +66,15 @@ def get_setting(
     default: Optional[str] = None,
 ) -> Optional[str]:
     env_value = os.getenv(env_key)
-    if env_value:
-        return env_value
+    if env_value is not None:
+        env_value = env_value.strip()
+        if env_value:
+            return env_value
 
     config_value = config.get(config_key)
     if config_value is not None:
-        return str(config_value)
+        value = str(config_value).strip()
+        if value:
+            return value
 
     return default
