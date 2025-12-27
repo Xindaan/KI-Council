@@ -52,7 +52,7 @@ Umgebungsvariablen überschreiben Werte aus der Datei. Optional kannst du den Pf
 
 ## Nutzung
 
-Installiere das Paket einmalig im Projektordner:
+Installiere das Paket einmalig im Projektordner (achte auf den abschließenden Punkt):
 
 ```bash
 python3 -m pip install -e .
