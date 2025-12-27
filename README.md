@@ -36,9 +36,13 @@ Du kannst eine lokale Konfigurationsdatei `.ki-council.json` verwenden (bereits 
   "anthropic_model": "claude-3-haiku-20240307",
   "judge_api_key": "sk-...",
   "judge_model": "gpt-4o-mini",
-  "judge_base_url": "https://api.openai.com/v1"
+  "judge_base_url": "https://api.openai.com/v1",
+  "ca_bundle": "/path/to/ca-bundle.pem",
+  "insecure_ssl": "false"
 }
 ```
+
+Falls du einen eigenen Zertifikatsspeicher brauchst (z. B. in einer Firmenumgebung), setze `KI_COUNCIL_CA_BUNDLE` oder `ca_bundle` in der Datei auf den Pfad zum CA‑Bundle. Für Debugging kannst du TLS‑Prüfungen mit `KI_COUNCIL_INSECURE=1` bzw. `"insecure_ssl": "true"` deaktivieren (nicht empfohlen).
 
 Umgebungsvariablen überschreiben Werte aus der Datei. Optional kannst du den Pfad zur Datei über `KI_COUNCIL_CONFIG` setzen.
 

@@ -1,8 +1,10 @@
 import json
 import os
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+from functools import lru_cache
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
@@ -23,7 +25,7 @@ def _post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> Di
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=60, context=_get_ssl_context()) as response:
             body = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8")
@@ -35,6 +37,18 @@ def _post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> Di
         return json.loads(body)
     except json.JSONDecodeError as exc:
         raise LLMError(f"Invalid JSON response: {body}") from exc
+
+
+@lru_cache(maxsize=1)
+def _get_ssl_context() -> Optional[ssl.SSLContext]:
+    config = load_config()
+    ca_bundle = get_setting(config, "KI_COUNCIL_CA_BUNDLE", "ca_bundle")
+    insecure = get_setting(config, "KI_COUNCIL_INSECURE", "insecure_ssl")
+    if insecure and insecure.lower() in {"1", "true", "yes"}:
+        return ssl._create_unverified_context()
+    if ca_bundle:
+        return ssl.create_default_context(cafile=ca_bundle)
+    return None
 
 
 def normalize_base_url(base_url: str) -> str:
