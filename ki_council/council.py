@@ -8,7 +8,10 @@ from ki_council.config import get_setting, load_config
 def gather_responses(prompt: str, max_tokens: int = 512) -> List[LLMResponse]:
     clients = load_clients()
     if not clients:
-        raise RuntimeError("No LLM clients configured. Set API keys in environment variables.")
+        raise RuntimeError(
+            "No LLM clients configured. Set API keys in environment variables or "
+            "in a .ki-council.json config file."
+        )
 
     responses: List[LLMResponse] = []
     with ThreadPoolExecutor(max_workers=len(clients)) as executor:
