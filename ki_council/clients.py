@@ -1,6 +1,7 @@
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Dict, List
@@ -36,11 +37,21 @@ def _post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> Di
         raise LLMError(f"Invalid JSON response: {body}") from exc
 
 
+def normalize_base_url(base_url: str) -> str:
+    parsed = urllib.parse.urlparse(base_url)
+    if not parsed.scheme:
+        base_url = f"https://{base_url}"
+        parsed = urllib.parse.urlparse(base_url)
+    if not parsed.netloc:
+        raise LLMError(f"Invalid base URL: {base_url}")
+    return base_url
+
+
 class OpenAIClient:
     def __init__(self, api_key: str, model: str, base_url: str) -> None:
         self.api_key = api_key
         self.model = model
-        self.base_url = base_url.rstrip("/")
+        self.base_url = normalize_base_url(base_url).rstrip("/")
 
     def generate(self, prompt: str, max_tokens: int = 512) -> LLMResponse:
         url = f"{self.base_url}/chat/completions"
