@@ -10,6 +10,18 @@ DEFAULT_CONFIG_NAME = ".ki-council.json"
 
 _COMMENT_PATTERN = re.compile(r"(^\\s*(//|#).*$)|(/\\*.*?\\*/)", re.MULTILINE | re.DOTALL)
 _TRAILING_COMMA_PATTERN = re.compile(r",\\s*([}\\]])")
+_SMART_QUOTE_TRANSLATION = str.maketrans(
+    {
+        "“": '"',
+        "”": '"',
+        "„": '"',
+        "‟": '"',
+        "’": "'",
+        "‘": "'",
+        "‚": "'",
+        "‛": "'",
+    }
+)
 
 
 def _find_default_config_path() -> Optional[Path]:
@@ -32,7 +44,8 @@ def load_config() -> Dict[str, Any]:
 
     try:
         raw = config_path.read_text(encoding="utf-8").lstrip("\ufeff")
-        sanitized = _COMMENT_PATTERN.sub("", raw)
+        sanitized = raw.translate(_SMART_QUOTE_TRANSLATION)
+        sanitized = _COMMENT_PATTERN.sub("", sanitized)
         sanitized = _TRAILING_COMMA_PATTERN.sub(r"\1", sanitized)
         data = json.loads(sanitized)
     except (OSError, json.JSONDecodeError) as exc:
