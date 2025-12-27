@@ -121,6 +121,25 @@ class GeminiClient:
         self.api_key = api_key
         self.model = model
 
+    def _extract_text(self, data: Dict[str, Any]) -> str:
+        try:
+            candidate = data["candidates"][0]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise LLMError(f"Unexpected Gemini response: {data}") from exc
+
+        parts = candidate.get("content", {}).get("parts", [])
+        text_chunks = [part.get("text", "") for part in parts if isinstance(part, dict)]
+        text = "".join(text_chunks).strip()
+        if text:
+            return text
+
+        finish_reason = candidate.get("finishReason", "unknown")
+        return (
+            "Gemini lieferte keinen Textinhalt. "
+            f"finishReason={finish_reason}. "
+            "Erhöhe ggf. das Token-Limit oder verwende ein anderes Modell."
+        )
+
     def generate(self, prompt: str, max_tokens: int = 512) -> LLMResponse:
         url = (
             "https://generativelanguage.googleapis.com/v1beta/"
@@ -132,10 +151,7 @@ class GeminiClient:
         }
         headers = {"Content-Type": "application/json"}
         data = _post_json(url, payload, headers)
-        try:
-            content = data["candidates"][0]["content"]["parts"][0]["text"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise LLMError(f"Unexpected Gemini response: {data}") from exc
+        content = self._extract_text(data)
         return LLMResponse(provider="gemini", model=self.model, content=content.strip())
 
 
