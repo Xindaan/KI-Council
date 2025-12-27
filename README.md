@@ -19,6 +19,7 @@ export OPENAI_MODEL=gpt-4o-mini
 export GEMINI_MODEL=gemini-1.5-flash
 export ANTHROPIC_MODEL=claude-3-haiku-20240307
 export JUDGE_MODEL=gpt-4o-mini
+export OPENAI_MAX_TOKENS_PARAM=max_tokens
 ```
 
 ### Alternative: lokale Konfigurationsdatei
@@ -30,6 +31,7 @@ Du kannst eine lokale Konfigurationsdatei `.ki-council.json` verwenden (bereits 
   "openai_api_key": "sk-...",
   "openai_model": "gpt-4o-mini",
   "openai_base_url": "https://api.openai.com/v1",
+  "openai_max_tokens_param": "max_tokens",
   "gemini_api_key": "...",
   "gemini_model": "gemini-1.5-flash",
   "anthropic_api_key": "...",
@@ -43,6 +45,8 @@ Du kannst eine lokale Konfigurationsdatei `.ki-council.json` verwenden (bereits 
 ```
 
 Falls du einen eigenen Zertifikatsspeicher brauchst (z. B. in einer Firmenumgebung), setze `KI_COUNCIL_CA_BUNDLE` oder `ca_bundle` in der Datei auf den Pfad zum CA‑Bundle. Für Debugging kannst du TLS‑Prüfungen mit `KI_COUNCIL_INSECURE=1` bzw. `"insecure_ssl": "true"` deaktivieren (nicht empfohlen).
+
+Hinweis: Einige OpenAI-Modelle (z. B. `gpt-5`/`o1`) erwarten `max_completion_tokens` statt `max_tokens`. Du kannst den Parameter über `OPENAI_MAX_TOKENS_PARAM` oder `"openai_max_tokens_param"` auf `max_completion_tokens` setzen.
 
 Umgebungsvariablen überschreiben Werte aus der Datei. Optional kannst du den Pfad zur Datei über `KI_COUNCIL_CONFIG` setzen.
 
