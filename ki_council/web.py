@@ -1,13 +1,19 @@
 import argparse
 import html
+import json
 import os
 import re
+import threading
+import uuid
+from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from string import Template
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
 
-from ki_council.council import build_judge_prompt, gather_responses, judge_responses
+from ki_council.clients import LLMError, LLMResponse, load_clients
+from ki_council.council import build_judge_prompt, judge_responses
 from ki_council.config import CONFIG_ENV_VAR
 
 
@@ -142,6 +148,12 @@ PAGE_TEMPLATE = Template("""<!doctype html>
         margin: 8px 0 8px 20px;
         padding: 0;
       }
+      .results-container {
+        margin-top: 24px;
+      }
+      .hidden {
+        display: none;
+      }
       .responses {
         display: grid;
         gap: 16px;
@@ -258,7 +270,9 @@ PAGE_TEMPLATE = Template("""<!doctype html>
           <span class="status-text">$status_text</span>
         </div>
       </section>
-      $content
+      <div id="results" class="results-container">
+        $content
+      </div>
       <footer>
         Stelle sicher, dass API-Keys gesetzt sind (OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY).
       </footer>
@@ -267,14 +281,67 @@ PAGE_TEMPLATE = Template("""<!doctype html>
       const form = document.querySelector("form");
       const status = document.getElementById("status");
       const statusText = status.querySelector(".status-text");
+      const results = document.getElementById("results");
+      const submitButton = form.querySelector("button[type='submit']");
 
       const updateStatus = (text) => {
         statusText.textContent = text;
       };
 
-      form.addEventListener("submit", () => {
+      const setLoading = (isLoading) => {
+        submitButton.disabled = isLoading;
+        submitButton.textContent = isLoading ? "Bitte warten..." : "Antworten abrufen";
+      };
+
+      const pollStatus = async (jobId) => {
+        const response = await fetch(`/status?id=${jobId}`);
+        if (!response.ok) {
+          updateStatus("Fehler bei der Anfrage.");
+          setLoading(false);
+          return;
+        }
+        const data = await response.json();
+        updateStatus(data.message);
+        if (data.state === "done") {
+          results.innerHTML = data.html || "";
+          status.dataset.state = "done";
+          updateStatus("Fertig.");
+          setLoading(false);
+          return;
+        }
+        if (data.state === "error") {
+          results.innerHTML = data.html || "";
+          status.dataset.state = "error";
+          updateStatus(data.message || "Fehler bei der Anfrage.");
+          setLoading(false);
+          return;
+        }
+        window.setTimeout(() => pollStatus(jobId), 1000);
+      };
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        results.innerHTML = "";
         status.dataset.state = "loading";
         updateStatus("Anfrage läuft...");
+        setLoading(true);
+
+        const payload = {
+          prompt: form.querySelector("#prompt").value,
+          max_tokens: Number(form.querySelector("#max_tokens").value || 2048),
+        };
+        const response = await fetch("/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          updateStatus("Fehler bei der Anfrage.");
+          setLoading(false);
+          return;
+        }
+        const data = await response.json();
+        pollStatus(data.job_id);
       });
 
       if (status.dataset.state === "idle") {
@@ -290,13 +357,84 @@ PAGE_TEMPLATE = Template("""<!doctype html>
 """)
 
 
-def _model_labels() -> list[str]:
-    labels = []
-    for client in load_clients():
-        provider = client.__class__.__name__.replace("Client", "").lower()
-        labels.append(f"{provider} · {client.model}")
-    return labels
+@dataclass
+class Job:
+    job_id: str
+    prompt: str
+    max_tokens: int
+    state: str = "queued"
+    message: str = "Warte auf Start..."
+    html: str = ""
+    completed: int = 0
+    total: int = 0
+    responses: list[LLMResponse] = field(default_factory=list)
 
+
+JOBS: dict[str, Job] = {}
+JOBS_LOCK = threading.Lock()
+
+
+def _update_job(job_id: str, **updates: object) -> None:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return
+        for key, value in updates.items():
+            setattr(job, key, value)
+
+
+def _run_job(job_id: str) -> None:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if not job:
+        return
+
+    try:
+        clients = load_clients()
+        if not clients:
+            raise LLMError(
+                "Keine LLM-Clients konfiguriert. "
+                "Bitte API-Keys setzen oder eine Konfigurationsdatei verwenden."
+            )
+
+        _update_job(
+            job_id,
+            state="running",
+            message="Anfragen werden versendet...",
+            total=len(clients),
+            completed=0,
+        )
+
+        responses: list[LLMResponse] = []
+        with ThreadPoolExecutor(max_workers=len(clients)) as executor:
+            future_map = {executor.submit(client.generate, job.prompt, job.max_tokens): client for client in clients}
+            for future in as_completed(future_map):
+                client = future_map[future]
+                provider = client.__class__.__name__.replace("Client", "").lower()
+                model = client.model
+                try:
+                    response = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    response = LLMResponse(
+                        provider=provider,
+                        model=model,
+                        content=f"Fehler bei der Anfrage: {exc}",
+                    )
+                responses.append(response)
+                _update_job(
+                    job_id,
+                    completed=len(responses),
+                    message=f"Antwort von {provider} ({model}) erhalten ({len(responses)}/{len(clients)}).",
+                )
+
+        responses.sort(key=lambda r: r.provider)
+        responses_text, judgment = judge_responses(job.prompt, responses)
+        judge_prompt = build_judge_prompt(job.prompt, responses_text)
+        content = _render_results(responses, judgment, judge_prompt)
+        _update_job(job_id, state="done", message="Fertig.", html=content)
+    except Exception as exc:  # noqa: BLE001
+        content = _render_error(str(exc))
+        _update_job(job_id, state="error", message="Fehler bei der Anfrage.", html=content)
 
 def _render_error(message: str) -> str:
     return f'<section class="card"><div class="error">{html.escape(message)}</div></section>'
@@ -416,11 +554,66 @@ class CouncilHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(page)
 
+    def _send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:
+        path = urlparse(self.path).path
+        if path == "/status":
+            query = urlparse(self.path).query
+            params = parse_qs(query)
+            job_id = (params.get("id") or [""])[0]
+            with JOBS_LOCK:
+                job = JOBS.get(job_id)
+            if not job:
+                self._send_json({"state": "error", "message": "Unbekannte Anfrage."}, HTTPStatus.NOT_FOUND)
+                return
+            payload = {
+                "state": job.state,
+                "message": job.message,
+                "completed": job.completed,
+                "total": job.total,
+                "html": job.html if job.state in {"done", "error"} else "",
+            }
+            self._send_json(payload)
+            return
+
         page = _render_page("", 2048, "")
         self._send_page(page)
 
     def do_POST(self) -> None:
+        path = urlparse(self.path).path
+        if path == "/run":
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length).decode("utf-8")
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError:
+                self._send_json({"error": "Ungültige Anfrage."}, HTTPStatus.BAD_REQUEST)
+                return
+            prompt = str(payload.get("prompt", "")).strip()
+            max_tokens = payload.get("max_tokens", 2048)
+            try:
+                max_tokens = int(max_tokens)
+            except (TypeError, ValueError):
+                max_tokens = 2048
+            if not prompt:
+                self._send_json({"error": "Bitte einen Prompt eingeben."}, HTTPStatus.BAD_REQUEST)
+                return
+            job_id = uuid.uuid4().hex
+            job = Job(job_id=job_id, prompt=prompt, max_tokens=max_tokens)
+            with JOBS_LOCK:
+                JOBS[job_id] = job
+            thread = threading.Thread(target=_run_job, args=(job_id,), daemon=True)
+            thread.start()
+            self._send_json({"job_id": job_id})
+            return
+
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length).decode("utf-8")
         data = parse_qs(body)
@@ -443,7 +636,31 @@ class CouncilHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            responses = gather_responses(prompt, max_tokens=max_tokens)
+            responses = []
+            clients = load_clients()
+            if not clients:
+                raise LLMError(
+                    "Keine LLM-Clients konfiguriert. "
+                    "Bitte API-Keys setzen oder eine Konfigurationsdatei verwenden."
+                )
+            with ThreadPoolExecutor(max_workers=len(clients)) as executor:
+                future_map = {
+                    executor.submit(client.generate, prompt, max_tokens): client for client in clients
+                }
+                for future in as_completed(future_map):
+                    client = future_map[future]
+                    provider = client.__class__.__name__.replace("Client", "").lower()
+                    model = client.model
+                    try:
+                        response = future.result()
+                    except Exception as exc:  # noqa: BLE001
+                        response = LLMResponse(
+                            provider=provider,
+                            model=model,
+                            content=f"Fehler bei der Anfrage: {exc}",
+                        )
+                    responses.append(response)
+            responses.sort(key=lambda r: r.provider)
             responses_text, judgment = judge_responses(prompt, responses)
             judge_prompt = build_judge_prompt(prompt, responses_text)
             content = _render_results(responses, judgment, judge_prompt)

@@ -1,0 +1,10 @@
+Du bist ein Analyst, der Antworten verschiedener LLMs vergleicht.
+Analysiere die Antworten auf Gemeinsamkeiten, Unterschiede, Stärken, Schwächen
+und gib eine kurze Empfehlung. Antworte strukturiert mit den Abschnitten:
+Gemeinsamkeiten, Unterschiede, Bewertung, Empfehlung.
+
+Ursprungs-Prompt:
+{prompt}
+
+Antworten:
+{responses_text}
