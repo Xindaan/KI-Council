@@ -1,16 +1,16 @@
 import argparse
 import html
 import os
+from string import Template
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Optional
 from urllib.parse import parse_qs
 
 from ki_council.council import gather_responses, judge_responses
 from ki_council.config import CONFIG_ENV_VAR
 
 
-PAGE_TEMPLATE = """<!doctype html>
+PAGE_TEMPLATE = Template("""<!doctype html>
 <html lang="de">
   <head>
     <meta charset="utf-8" />
@@ -131,28 +131,28 @@ PAGE_TEMPLATE = """<!doctype html>
       <section class="card">
         <form method="post">
           <label for="prompt">Prompt</label>
-          <textarea id="prompt" name="prompt" required>{prompt}</textarea>
+          <textarea id="prompt" name="prompt" required>$prompt</textarea>
           <div>
             <label for="max_tokens">Max tokens pro Antwort</label>
-            <input id="max_tokens" name="max_tokens" type="number" min="64" max="4096" step="32" value="{max_tokens}" />
+            <input id="max_tokens" name="max_tokens" type="number" min="64" max="4096" step="32" value="$max_tokens" />
           </div>
           <div style="margin-top: 16px;">
             <button type="submit">Antworten abrufen</button>
           </div>
         </form>
       </section>
-      {content}
+      $content
       <footer>
         Stelle sicher, dass API-Keys gesetzt sind (OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY).
       </footer>
     </main>
   </body>
 </html>
-"""
+""")
 
 
 def _render_page(prompt: str, max_tokens: int, content: str) -> bytes:
-    html_page = PAGE_TEMPLATE.format(
+    html_page = PAGE_TEMPLATE.safe_substitute(
         prompt=html.escape(prompt or ""),
         max_tokens=max_tokens,
         content=content,
