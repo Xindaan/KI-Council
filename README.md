@@ -56,6 +56,16 @@ Umgebungsvariablen überschreiben Werte aus der Datei. Optional kannst du den Pf
 python -m ki_council.cli "Dein Prompt hier"
 ```
 
+### Web-Oberfläche
+
+Starte eine einfache Web-UI für den Council:
+
+```bash
+python -m ki_council.web --host 127.0.0.1 --port 8000
+```
+
+Danach im Browser öffnen: `http://127.0.0.1:8000`
+
 Oder als JSON-Ausgabe:
 
 ```bash
