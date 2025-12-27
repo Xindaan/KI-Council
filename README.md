@@ -52,9 +52,10 @@ Umgebungsvariablen überschreiben Werte aus der Datei. Optional kannst du den Pf
 
 ## Nutzung
 
-Installiere das Paket einmalig im Projektordner (achte auf den abschließenden Punkt):
+Installiere das Paket einmalig im Projektordner (achte auf den abschließenden Punkt und führe es im Repo-Root aus):
 
 ```bash
+cd /pfad/zum/KI-Council
 python3 -m pip install -e .
 ```
 
