@@ -31,7 +31,15 @@ def _post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> Di
         error_body = exc.read().decode("utf-8")
         raise LLMError(f"Request failed: {exc.code} {exc.reason} {error_body}") from exc
     except urllib.error.URLError as exc:
-        raise LLMError(f"Request failed: {exc.reason}") from exc
+        reason = exc.reason
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            hint = (
+                "TLS verification failed. Configure KI_COUNCIL_CA_BUNDLE/ca_bundle "
+                "with your CA bundle path, or set KI_COUNCIL_INSECURE=1/"
+                "insecure_ssl=true to disable verification (not recommended)."
+            )
+            raise LLMError(f"Request failed: {reason}. {hint}") from exc
+        raise LLMError(f"Request failed: {reason}") from exc
 
     try:
         return json.loads(body)
