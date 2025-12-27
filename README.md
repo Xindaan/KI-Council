@@ -52,6 +52,12 @@ Umgebungsvariablen überschreiben Werte aus der Datei. Optional kannst du den Pf
 
 ## Nutzung
 
+Installiere das Paket einmalig im Projektordner:
+
+```bash
+python3 -m pip install -e .
+```
+
 ```bash
 python -m ki_council.cli "Dein Prompt hier"
 ```

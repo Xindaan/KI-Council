@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ki-council"
+version = "0.1.0"
+description = "Send prompts to multiple LLMs and compare the responses."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+  { name = "KI-Council Contributors" }
+]
+dependencies = []
+
