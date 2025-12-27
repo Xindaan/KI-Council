@@ -7,16 +7,31 @@ CONFIG_ENV_VAR = "KI_COUNCIL_CONFIG"
 DEFAULT_CONFIG_NAME = ".ki-council.json"
 
 
+def _find_default_config_path() -> Optional[Path]:
+    for candidate_dir in [Path.cwd(), *Path.cwd().parents]:
+        candidate = candidate_dir / DEFAULT_CONFIG_NAME
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def load_config() -> Dict[str, Any]:
-    config_path = Path(os.getenv(CONFIG_ENV_VAR, DEFAULT_CONFIG_NAME))
-    if not config_path.exists():
+    configured_path = os.getenv(CONFIG_ENV_VAR)
+    if configured_path:
+        config_path = Path(configured_path).expanduser()
+    else:
+        config_path = _find_default_config_path()
+
+    if not config_path:
         return {}
 
     try:
         raw = config_path.read_text(encoding="utf-8")
         data = json.loads(raw)
     except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Failed to read config file: {config_path}") from exc
+        raise RuntimeError(
+            f"Failed to read config file: {config_path} ({exc})"
+        ) from exc
 
     if not isinstance(data, dict):
         raise RuntimeError(f"Config file must contain a JSON object: {config_path}")
