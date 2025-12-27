@@ -4,6 +4,15 @@ from typing import Iterable, List, Tuple
 from ki_council.clients import LLMResponse, OpenAIClient, load_clients
 from ki_council.config import get_setting, load_config
 
+JUDGE_PROMPT_TEMPLATE = (
+    "Du bist ein Analyst, der Antworten verschiedener LLMs vergleicht. "
+    "Analysiere die Antworten auf Gemeinsamkeiten, Unterschiede, Stärken, "
+    "Schwächen und gib eine kurze Empfehlung. Antworte strukturiert mit "
+    "den Abschnitten: Gemeinsamkeiten, Unterschiede, Bewertung, Empfehlung.\n\n"
+    "Ursprungs-Prompt:\n{prompt}\n\n"
+    "Antworten:\n{responses_text}"
+)
+
 
 def gather_responses(prompt: str, max_tokens: int = 512) -> List[LLMResponse]:
     clients = load_clients()
@@ -42,15 +51,8 @@ def format_responses(responses: Iterable[LLMResponse]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
-def _build_judge_prompt(prompt: str, responses_text: str) -> str:
-    return (
-        "Du bist ein Analyst, der Antworten verschiedener LLMs vergleicht. "
-        "Analysiere die Antworten auf Gemeinsamkeiten, Unterschiede, Stärken, "
-        "Schwächen und gib eine kurze Empfehlung. Antworte strukturiert mit "
-        "den Abschnitten: Gemeinsamkeiten, Unterschiede, Bewertung, Empfehlung.\n\n"
-        f"Ursprungs-Prompt:\n{prompt}\n\n"
-        f"Antworten:\n{responses_text}"
-    )
+def build_judge_prompt(prompt: str, responses_text: str) -> str:
+    return JUDGE_PROMPT_TEMPLATE.format(prompt=prompt, responses_text=responses_text)
 
 
 def judge_responses(prompt: str, responses: List[LLMResponse]) -> Tuple[str, str]:
@@ -77,6 +79,6 @@ def judge_responses(prompt: str, responses: List[LLMResponse]) -> Tuple[str, str
     judge_client = OpenAIClient(judge_key, judge_model, judge_base_url)
 
     responses_text = format_responses(responses)
-    judge_prompt = _build_judge_prompt(prompt, responses_text)
+    judge_prompt = build_judge_prompt(prompt, responses_text)
     result = judge_client.generate(judge_prompt, max_tokens=512)
     return responses_text, result.content
