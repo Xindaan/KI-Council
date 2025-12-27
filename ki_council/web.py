@@ -6,7 +6,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 
-from ki_council.council import gather_responses, judge_responses
+from ki_council.council import build_judge_prompt, gather_responses, judge_responses
 from ki_council.config import CONFIG_ENV_VAR
 
 
@@ -39,12 +39,26 @@ PAGE_TEMPLATE = Template("""<!doctype html>
         font-size: 2rem;
         margin-bottom: 8px;
       }
+      h2 {
+        margin-top: 0;
+      }
+      h3 {
+        margin-top: 0;
+      }
       .card {
         background: #fff;
         border-radius: 16px;
         box-shadow: 0 10px 30px rgba(20, 20, 20, 0.08);
         padding: 24px;
         margin-bottom: 24px;
+      }
+      .card article.card {
+        margin-bottom: 16px;
+        box-shadow: none;
+        border: 1px solid #e4e6ef;
+      }
+      .card article.card:last-child {
+        margin-bottom: 0;
       }
       label {
         font-weight: 600;
@@ -86,6 +100,11 @@ PAGE_TEMPLATE = Template("""<!doctype html>
         border-radius: 12px;
         border: 1px solid #e4e6ef;
       }
+      summary {
+        cursor: pointer;
+        font-weight: 600;
+        margin-bottom: 12px;
+      }
       .error {
         background: #ffecee;
         border: 1px solid #ffd0d6;
@@ -106,6 +125,9 @@ PAGE_TEMPLATE = Template("""<!doctype html>
         .card {
           background: #171a21;
           box-shadow: none;
+        }
+        .card article.card {
+          border-color: #2a2f3a;
         }
         textarea,
         input[type="number"],
@@ -164,15 +186,38 @@ def _render_error(message: str) -> str:
     return f'<section class="card"><div class="error">{html.escape(message)}</div></section>'
 
 
-def _render_results(responses: str, comparison: str) -> str:
+def _render_response_blocks(responses: list) -> str:
+    blocks = []
+    for response in responses:
+        provider = html.escape(response.provider)
+        model = html.escape(response.model)
+        content = html.escape(response.content)
+        blocks.append(
+            "<article class=\"card\">"
+            f"<h3>{provider}</h3>"
+            f"<p><strong>Modell:</strong> {model}</p>"
+            f"<pre>{content}</pre>"
+            "</article>"
+        )
+    return "".join(blocks)
+
+
+def _render_results(responses: list, comparison: str, judge_prompt: str) -> str:
+    responses_html = _render_response_blocks(responses)
     return (
         "<section class=\"card\">"
         "<h2>Antworten</h2>"
-        f"<pre>{html.escape(responses)}</pre>"
+        f"{responses_html}"
         "</section>"
         "<section class=\"card\">"
         "<h2>Vergleich</h2>"
         f"<pre>{html.escape(comparison)}</pre>"
+        "</section>"
+        "<section class=\"card\">"
+        "<details>"
+        "<summary>Summarizing-Prompt</summary>"
+        f"<pre>{html.escape(judge_prompt)}</pre>"
+        "</details>"
         "</section>"
     )
 
@@ -188,7 +233,7 @@ class CouncilHandler(BaseHTTPRequestHandler):
         self.wfile.write(page)
 
     def do_GET(self) -> None:
-        page = _render_page("", 512, "")
+        page = _render_page("", 2048, "")
         self._send_page(page)
 
     def do_POST(self) -> None:
@@ -196,11 +241,11 @@ class CouncilHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length).decode("utf-8")
         data = parse_qs(body)
         prompt = (data.get("prompt") or [""])[0].strip()
-        max_tokens_raw = (data.get("max_tokens") or ["512"])[0]
+        max_tokens_raw = (data.get("max_tokens") or ["2048"])[0]
         try:
             max_tokens = int(max_tokens_raw)
         except ValueError:
-            max_tokens = 512
+            max_tokens = 2048
 
         if not prompt:
             page = _render_page("", max_tokens, _render_error("Bitte einen Prompt eingeben."))
@@ -210,7 +255,8 @@ class CouncilHandler(BaseHTTPRequestHandler):
         try:
             responses = gather_responses(prompt, max_tokens=max_tokens)
             responses_text, judgment = judge_responses(prompt, responses)
-            content = _render_results(responses_text, judgment)
+            judge_prompt = build_judge_prompt(prompt, responses_text)
+            content = _render_results(responses, judgment, judge_prompt)
         except Exception as exc:  # noqa: BLE001
             content = _render_error(str(exc))
 
