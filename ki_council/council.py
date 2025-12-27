@@ -1,17 +1,17 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable, List, Tuple
 
+from functools import lru_cache
+from pathlib import Path
+
 from ki_council.clients import LLMResponse, OpenAIClient, load_clients
 from ki_council.config import get_setting, load_config
 
-JUDGE_PROMPT_TEMPLATE = (
-    "Du bist ein Analyst, der Antworten verschiedener LLMs vergleicht. "
-    "Analysiere die Antworten auf Gemeinsamkeiten, Unterschiede, Stärken, "
-    "Schwächen und gib eine kurze Empfehlung. Antworte strukturiert mit "
-    "den Abschnitten: Gemeinsamkeiten, Unterschiede, Bewertung, Empfehlung.\n\n"
-    "Ursprungs-Prompt:\n{prompt}\n\n"
-    "Antworten:\n{responses_text}"
-)
+
+@lru_cache(maxsize=1)
+def _load_judge_prompt_template() -> str:
+    template_path = Path(__file__).with_name("judge_prompt.txt")
+    return template_path.read_text(encoding="utf-8")
 
 
 def gather_responses(prompt: str, max_tokens: int = 512) -> List[LLMResponse]:
@@ -52,7 +52,8 @@ def format_responses(responses: Iterable[LLMResponse]) -> str:
 
 
 def build_judge_prompt(prompt: str, responses_text: str) -> str:
-    return JUDGE_PROMPT_TEMPLATE.format(prompt=prompt, responses_text=responses_text)
+    template = _load_judge_prompt_template()
+    return template.format(prompt=prompt, responses_text=responses_text)
 
 
 def judge_responses(prompt: str, responses: List[LLMResponse]) -> Tuple[str, str]:
