@@ -1,10 +1,23 @@
-Du bist ein Analyst, der Antworten verschiedener LLMs vergleicht.
-Analysiere die Antworten auf Gemeinsamkeiten, Unterschiede, Stärken, Schwächen
-und gib eine kurze Empfehlung. Antworte strukturiert mit den Abschnitten:
-Gemeinsamkeiten, Unterschiede, Bewertung, Empfehlung.
+AUFGABE
+Erstelle eine Synthese aus den vorliegenden Modell-Antworten.
+
+AUSGABEFORMAT
+- Konsens (von allen Modellen): Bullet-Liste der Claims mit kurzer Evidenz-Zusammenfassung.
+- Mehrheitsmeinung: Claims + welche Modelle zustimmen + Gegenargumente der anderen.
+- Umstritten/Unique: Claims, die nur 1 Modell macht; nenne Begründung + was zur Klärung nötig ist.
+- Annahmen-Delta: Wo unterscheiden sich die Prämissen?
+- Evidenz-Matrix (kurz): Für jeden Konsens-/Mehrheits-Claim: wichtigste 1–2 Quellen (mit Datum wenn verfügbar).
+- Entscheidungen: 3–5 konkrete Schlussfolgerungen + Konfidenz (0–1).
+- Offene Fragen & Next Steps: verifizierbare Checks (mit Vorschlägen, wie zu prüfen).
+
+STEELMAN (nur für Judge-Modell {judge_model})
+1) Steelman: Formuliere die stärksten Versionen der Hauptthesen der anderen Modelle ({other_providers}) - keine Strohmänner.
+2) Kritik: Präzise, testbare Gegenargumente + welche Evidenz die Kritik stützen würde.
+3) Update: Welche Punkte übernimmst du nun selbst (falls überzeugend) – mit kurzer Begründung.
+4) Gib deine zusammenfassende Gesamtantwort aus.
 
 Ursprungs-Prompt:
 {prompt}
 
-Antworten:
+Antworten der Modelle:
 {responses_text}
