@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import ssl
 import urllib.error
@@ -6,29 +7,88 @@ import urllib.parse
 import urllib.request
 from functools import lru_cache
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 
 from ki_council.config import get_setting, load_config
 
+# Constants
+DEFAULT_TIMEOUT = 60
+DEFAULT_MAX_TOKENS = 512
+
+logger = logging.getLogger(__name__)
+
+
 class LLMError(RuntimeError):
+    """Exception raised when an LLM API request fails."""
     pass
 
 
 @dataclass
 class LLMResponse:
+    """Response from an LLM provider.
+
+    Attributes:
+        provider: Name of the LLM provider (e.g., 'openai', 'gemini', 'anthropic')
+        model: Model identifier used for generation
+        content: Generated text response
+        error: Optional error message if the request failed
+        tokens_used: Optional token count (prompt + completion)
+        tokens_prompt: Optional number of prompt tokens
+        tokens_completion: Optional number of completion tokens
+    """
     provider: str
     model: str
     content: str
+    error: Optional[str] = None
+    tokens_used: Optional[int] = None
+    tokens_prompt: Optional[int] = None
+    tokens_completion: Optional[int] = None
+
+
+class LLMClient(Protocol):
+    """Protocol defining the interface for LLM clients."""
+
+    def generate(self, prompt: str, max_tokens: int = DEFAULT_MAX_TOKENS) -> LLMResponse:
+        """Generate a response for the given prompt.
+
+        Args:
+            prompt: The text prompt to send to the LLM
+            max_tokens: Maximum number of tokens to generate
+
+        Returns:
+            LLMResponse with the generated content
+
+        Raises:
+            LLMError: If the API request fails
+        """
+        ...
 
 
 def _post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+    """Send a POST request with JSON payload and return JSON response.
+
+    Args:
+        url: Target URL for the request
+        payload: JSON-serializable payload
+        headers: HTTP headers
+
+    Returns:
+        Parsed JSON response
+
+    Raises:
+        LLMError: If the request fails or response is invalid
+    """
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+
+    logger.debug(f"Sending POST request to {url}")
+
     try:
-        with urllib.request.urlopen(request, timeout=60, context=_get_ssl_context()) as response:
+        with urllib.request.urlopen(request, timeout=DEFAULT_TIMEOUT, context=_get_ssl_context()) as response:
             body = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8")
+        logger.error(f"HTTP error {exc.code} from {url}: {error_body}")
         raise LLMError(f"Request failed: {exc.code} {exc.reason} {error_body}") from exc
     except urllib.error.URLError as exc:
         reason = exc.reason
@@ -38,12 +98,15 @@ def _post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> Di
                 "with your CA bundle path, or set KI_COUNCIL_INSECURE=1/"
                 "insecure_ssl=true to disable verification (not recommended)."
             )
+            logger.error(f"SSL verification error: {reason}")
             raise LLMError(f"Request failed: {reason}. {hint}") from exc
+        logger.error(f"URL error: {reason}")
         raise LLMError(f"Request failed: {reason}") from exc
 
     try:
         return json.loads(body)
     except json.JSONDecodeError as exc:
+        logger.error(f"Invalid JSON response from {url}: {body[:200]}")
         raise LLMError(f"Invalid JSON response: {body}") from exc
 
 
@@ -80,12 +143,22 @@ def normalize_base_url(base_url: str) -> str:
 
 
 class OpenAIClient:
+    """OpenAI API client for chat completions."""
+
     def __init__(self, api_key: str, model: str, base_url: str) -> None:
+        """Initialize OpenAI client.
+
+        Args:
+            api_key: OpenAI API key
+            model: Model identifier (e.g., 'gpt-4o-mini')
+            base_url: Base URL for API requests
+        """
         self.api_key = api_key
         self.model = model
         self.base_url = normalize_base_url(base_url).rstrip("/")
 
     def _max_tokens_param(self) -> str:
+        """Determine the correct max tokens parameter name for the model."""
         config = load_config()
         override = get_setting(
             config, "OPENAI_MAX_TOKENS_PARAM", "openai_max_tokens_param"
@@ -97,7 +170,19 @@ class OpenAIClient:
             return "max_completion_tokens"
         return "max_tokens"
 
-    def generate(self, prompt: str, max_tokens: int = 512) -> LLMResponse:
+    def generate(self, prompt: str, max_tokens: int = DEFAULT_MAX_TOKENS) -> LLMResponse:
+        """Generate a response using OpenAI's chat completion API.
+
+        Args:
+            prompt: The text prompt
+            max_tokens: Maximum tokens to generate
+
+        Returns:
+            LLMResponse with generated content and token usage
+
+        Raises:
+            LLMError: If the API request fails
+        """
         url = f"{self.base_url}/chat/completions"
         payload = {
             "model": self.model,
@@ -108,20 +193,57 @@ class OpenAIClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+
+        logger.info(f"Requesting OpenAI completion with model {self.model}")
         data = _post_json(url, payload, headers)
+
         try:
             content = data["choices"][0]["message"]["content"]
+            usage = data.get("usage", {})
+            tokens_prompt = usage.get("prompt_tokens")
+            tokens_completion = usage.get("completion_tokens")
+            tokens_total = usage.get("total_tokens")
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError(f"Unexpected OpenAI response: {data}") from exc
-        return LLMResponse(provider="openai", model=self.model, content=content.strip())
+
+        logger.debug(f"OpenAI response: {tokens_total} tokens used")
+
+        return LLMResponse(
+            provider="openai",
+            model=self.model,
+            content=content.strip(),
+            tokens_used=tokens_total,
+            tokens_prompt=tokens_prompt,
+            tokens_completion=tokens_completion,
+        )
 
 
 class GeminiClient:
+    """Google Gemini API client."""
+
     def __init__(self, api_key: str, model: str) -> None:
+        """Initialize Gemini client.
+
+        Args:
+            api_key: Google API key
+            model: Model identifier (e.g., 'gemini-1.5-flash')
+        """
         self.api_key = api_key
         self.model = model
 
-    def generate(self, prompt: str, max_tokens: int = 512) -> LLMResponse:
+    def generate(self, prompt: str, max_tokens: int = DEFAULT_MAX_TOKENS) -> LLMResponse:
+        """Generate a response using Google's Gemini API.
+
+        Args:
+            prompt: The text prompt
+            max_tokens: Maximum tokens to generate
+
+        Returns:
+            LLMResponse with generated content
+
+        Raises:
+            LLMError: If the API request fails
+        """
         url = (
             "https://generativelanguage.googleapis.com/v1beta/"
             f"models/{self.model}:generateContent?key={self.api_key}"
@@ -131,20 +253,58 @@ class GeminiClient:
             "generationConfig": {"maxOutputTokens": max_tokens},
         }
         headers = {"Content-Type": "application/json"}
+
+        logger.info(f"Requesting Gemini completion with model {self.model}")
         data = _post_json(url, payload, headers)
+
         try:
             content = data["candidates"][0]["content"]["parts"][0]["text"]
+            # Gemini may include token counts in usageMetadata
+            usage = data.get("usageMetadata", {})
+            tokens_prompt = usage.get("promptTokenCount")
+            tokens_completion = usage.get("candidatesTokenCount")
+            tokens_total = usage.get("totalTokenCount")
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError(f"Unexpected Gemini response: {data}") from exc
-        return LLMResponse(provider="gemini", model=self.model, content=content.strip())
+
+        logger.debug(f"Gemini response: {tokens_total or 'unknown'} tokens used")
+
+        return LLMResponse(
+            provider="gemini",
+            model=self.model,
+            content=content.strip(),
+            tokens_used=tokens_total,
+            tokens_prompt=tokens_prompt,
+            tokens_completion=tokens_completion,
+        )
 
 
 class AnthropicClient:
+    """Anthropic Claude API client."""
+
     def __init__(self, api_key: str, model: str) -> None:
+        """Initialize Anthropic client.
+
+        Args:
+            api_key: Anthropic API key
+            model: Model identifier (e.g., 'claude-3-haiku-20240307')
+        """
         self.api_key = api_key
         self.model = model
 
-    def generate(self, prompt: str, max_tokens: int = 512) -> LLMResponse:
+    def generate(self, prompt: str, max_tokens: int = DEFAULT_MAX_TOKENS) -> LLMResponse:
+        """Generate a response using Anthropic's Messages API.
+
+        Args:
+            prompt: The text prompt
+            max_tokens: Maximum tokens to generate
+
+        Returns:
+            LLMResponse with generated content and token usage
+
+        Raises:
+            LLMError: If the API request fails
+        """
         url = "https://api.anthropic.com/v1/messages"
         payload = {
             "model": self.model,
@@ -156,20 +316,63 @@ class AnthropicClient:
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         }
+
+        logger.info(f"Requesting Anthropic completion with model {self.model}")
         data = _post_json(url, payload, headers)
+
         try:
             content = data["content"][0]["text"]
+            usage = data.get("usage", {})
+            tokens_prompt = usage.get("input_tokens")
+            tokens_completion = usage.get("output_tokens")
+            tokens_total = (tokens_prompt or 0) + (tokens_completion or 0) if tokens_prompt and tokens_completion else None
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError(f"Unexpected Anthropic response: {data}") from exc
-        return LLMResponse(provider="anthropic", model=self.model, content=content.strip())
+
+        logger.debug(f"Anthropic response: {tokens_total or 'unknown'} tokens used")
+
+        return LLMResponse(
+            provider="anthropic",
+            model=self.model,
+            content=content.strip(),
+            tokens_used=tokens_total,
+            tokens_prompt=tokens_prompt,
+            tokens_completion=tokens_completion,
+        )
 
 
-def load_clients() -> List[Any]:
+def load_clients(provider_filter: Optional[List[str]] = None) -> List[LLMClient]:
+    """Load all configured LLM clients.
+
+    Reads configuration and initializes clients for providers that have API keys configured.
+
+    Args:
+        provider_filter: Optional list of provider names to load (e.g., ['openai', 'anthropic']).
+                        If None, loads all configured providers.
+
+    Returns:
+        List of initialized LLM clients
+
+    Note:
+        Returns an empty list if no API keys are configured.
+    """
     config = load_config()
-    clients: List[Any] = []
+    clients: List[LLMClient] = []
+
+    # Check for provider filter from environment
+    if provider_filter is None:
+        env_providers = get_setting(config, "KI_COUNCIL_PROVIDERS", "providers")
+        if env_providers:
+            provider_filter = [p.strip().lower() for p in env_providers.split(",")]
+
+    def should_load(provider_name: str) -> bool:
+        """Check if provider should be loaded based on filter."""
+        if provider_filter is None:
+            return True
+        return provider_name.lower() in provider_filter
 
     openai_key = get_setting(config, "OPENAI_API_KEY", "openai_api_key")
-    if openai_key:
+    if openai_key and should_load("openai"):
         model = get_setting(config, "OPENAI_MODEL", "openai_model", "gpt-4o-mini")
         base_url = get_setting(
             config,
@@ -178,14 +381,16 @@ def load_clients() -> List[Any]:
             "https://api.openai.com/v1",
         )
         clients.append(OpenAIClient(openai_key, model, base_url))
+        logger.info(f"Loaded OpenAI client with model {model}")
 
     gemini_key = get_setting(config, "GEMINI_API_KEY", "gemini_api_key")
-    if gemini_key:
+    if gemini_key and should_load("gemini"):
         model = get_setting(config, "GEMINI_MODEL", "gemini_model", "gemini-1.5-flash")
         clients.append(GeminiClient(gemini_key, model))
+        logger.info(f"Loaded Gemini client with model {model}")
 
     anthropic_key = get_setting(config, "ANTHROPIC_API_KEY", "anthropic_api_key")
-    if anthropic_key:
+    if anthropic_key and should_load("anthropic"):
         model = get_setting(
             config,
             "ANTHROPIC_MODEL",
@@ -193,5 +398,7 @@ def load_clients() -> List[Any]:
             "claude-3-haiku-20240307",
         )
         clients.append(AnthropicClient(anthropic_key, model))
+        logger.info(f"Loaded Anthropic client with model {model}")
 
+    logger.info(f"Loaded {len(clients)} LLM client(s)")
     return clients
