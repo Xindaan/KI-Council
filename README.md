@@ -1,6 +1,6 @@
 # KI-Council
 
-Ein kleines CLI, das denselben Prompt an mehrere LLMs schickt und die Antworten anschließend durch ein weiteres LLM vergleichen lässt.
+Ein Tool mit CLI und Web-UI, das denselben Prompt an mehrere LLMs schickt und die Antworten anschließend durch ein weiteres LLM vergleichen lässt.
 
 ## Setup
 
@@ -52,23 +52,83 @@ Umgebungsvariablen überschreiben Werte aus der Datei. Optional kannst du den Pf
 
 ## Nutzung
 
+### Web-Oberfläche (empfohlen)
+
+Die einfachste Methode ist die Web-UI mit schönem Design, Echtzeit-Updates und Dark Mode:
+
+```bash
+python -m ki_council.web
+# Öffne dann http://127.0.0.1:8000 im Browser
+```
+
+Optionen für die Web-UI:
+```bash
+# Mit Custom Host/Port
+python -m ki_council.web --host 0.0.0.0 --port 8080
+
+# Mit Custom Config
+python -m ki_council.web --config /pfad/zur/.ki-council.json
+```
+
+### Kommandozeilen-Interface (CLI)
+
+Grundlegende Verwendung:
+
 ```bash
 python -m ki_council.cli "Dein Prompt hier"
 ```
 
-Oder als JSON-Ausgabe:
+Erweiterte CLI-Optionen:
 
 ```bash
+# JSON-Ausgabe für programmatische Verarbeitung
 python -m ki_council.cli "Dein Prompt hier" --json
+
+# Nur bestimmte Provider verwenden
+python -m ki_council.cli "Dein Prompt hier" --providers openai,anthropic
+
+# Verbose-Modus für detaillierte Logs
+python -m ki_council.cli "Dein Prompt hier" --verbose
+
+# Maximale Token-Anzahl anpassen
+python -m ki_council.cli "Dein Prompt hier" --max-tokens 1000
+
+# Benutzerdefinierte Konfigurationsdatei
+python -m ki_council.cli "Dein Prompt hier" --config /pfad/zur/.ki-council.json
+
+# Debug-Modus (zeigt Provider-Konfiguration)
+python -m ki_council.cli "Dein Prompt hier" --debug
+
+# Kombinierte Optionen
+python -m ki_council.cli "Dein Prompt hier" --providers openai,gemini --verbose --max-tokens 2000
 ```
 
-Konfigurations- und Diagnosetipps:
+## Neue Features
 
-```bash
-python -m ki_council.cli "Dein Prompt hier" --config /pfad/zur/.ki-council.json --debug
-```
+### Robuste Fehlerbehandlung
+- Wenn ein Provider fehlschlägt, werden weiterhin Antworten von anderen Providern angezeigt
+- Fehlgeschlagene Provider werden in der Ausgabe mit Fehlermeldung gekennzeichnet
+
+### Token-Tracking
+- Automatisches Tracking der verwendeten Tokens pro Provider
+- Anzeige von Prompt-, Completion- und Gesamt-Tokens in der Ausgabe
+
+### Provider-Auswahl
+- Über `--providers` kannst du gezielt Provider auswählen
+- Beispiel: `--providers openai,anthropic` verwendet nur diese beiden
+- Auch über Umgebungsvariable `KI_COUNCIL_PROVIDERS` oder Config-Eintrag `"providers"` möglich
+
+### Logging
+- `--verbose` oder `-v` aktiviert detaillierte Logs zu API-Aufrufen
+- Hilfreich zum Debuggen und Verstehen des Ablaufs
+
+### Anpassbarer Judge-Prompt
+- Der Prompt für den Vergleichs-LLM kann in `ki_council/judge_prompt.txt` angepasst werden
+- Verwendet Python `str.format()` Syntax mit Platzhaltern `{prompt}` und `{responses_text}`
+- Änderungen werden automatisch beim nächsten Start übernommen
 
 ## Hinweise
 
 - Für die Vergleichsanalyse wird standardmäßig OpenAI genutzt. Setze `JUDGE_API_KEY`, wenn du dafür einen separaten Key verwenden möchtest.
 - Ohne gesetzte API-Keys läuft das Tool nicht.
+- Token-Informationen werden nur angezeigt, wenn die Provider-APIs diese zurückliefern.
