@@ -127,9 +127,14 @@ python -m ki_council.cli "Dein Prompt hier" --providers openai,gemini --verbose 
 - Hilfreich zum Debuggen und Verstehen des Ablaufs
 
 ### Anpassbarer Judge-Prompt
-- Der Prompt für den Vergleichs-LLM kann in `ki_council/judge_prompt.txt` angepasst werden
-- Verwendet Python `str.format()` Syntax mit Platzhaltern `{prompt}` und `{responses_text}`
-- Änderungen werden automatisch beim nächsten Start übernommen
+- **Standard-Prompt:** `ki_council/judge_prompt.txt` (wird von Git verwaltet)
+- **Lokaler Override:** `ki_council/judge_prompt.txt.local` (wird von Git ignoriert, überschreibt Standard)
+- Verfügbare Platzhalter:
+  - `{prompt}` - Original-Prompt des Nutzers
+  - `{responses_text}` - Formatierte Antworten aller Provider
+  - `{judge_model}` - Name des Judge-Modells (z.B. "gpt-4o-mini")
+  - `{other_providers}` - Komma-getrennte Liste der anderen Provider (z.B. "anthropic, gemini")
+- **Tipp:** Kopiere `judge_prompt.txt` nach `judge_prompt.txt.local` für eigene Anpassungen, die nicht von Git überschrieben werden
 
 ## Hinweise
 
