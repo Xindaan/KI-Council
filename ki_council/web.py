@@ -258,8 +258,8 @@ PAGE_TEMPLATE = Template("""<!doctype html>
           <label for="prompt">Prompt</label>
           <textarea id="prompt" name="prompt" required>$prompt</textarea>
           <div>
-            <label for="max_tokens">Max tokens pro Antwort</label>
-            <input id="max_tokens" name="max_tokens" type="number" min="64" max="32768" step="128" value="$max_tokens" />
+            <label for="max_tokens">Max Tokens pro Antwort</label>
+            <input id="max_tokens" name="max_tokens" type="number" min="64" max="32768" step="64" value="$max_tokens" />
           </div>
           <div style="margin-top: 16px;">
             <button type="submit">Antworten abrufen</button>
@@ -400,8 +400,8 @@ def _run_job(job_id: str) -> None:
         _update_job(
             job_id,
             state="running",
-            message="Anfragen werden versendet...",
-            total=len(clients),
+            message="Anfragen werden an LLMs versendet...",
+            total=len(clients) + 1,  # +1 for judge
             completed=0,
         )
 
@@ -428,13 +428,21 @@ def _run_job(job_id: str) -> None:
                 )
 
         responses.sort(key=lambda r: r.provider)
+
+        # Update status before judge analysis
+        _update_job(
+            job_id,
+            completed=len(clients),
+            message="Alle Antworten erhalten. Judge-Modell analysiert und vergleicht die Antworten...",
+        )
+
         responses_text, judgment = judge_responses(job.prompt, responses)
         judge_prompt = build_judge_prompt(job.prompt, responses_text)
         content = _render_results(responses, judgment, judge_prompt)
-        _update_job(job_id, state="done", message="Fertig.", html=content)
+        _update_job(job_id, state="done", message="Fertig.", html=content, completed=len(clients) + 1)
     except Exception as exc:  # noqa: BLE001
         content = _render_error(str(exc))
-        _update_job(job_id, state="error", message="Fehler bei der Anfrage.", html=content)
+        _update_job(job_id, state="error", message=f"Fehler: {exc}", html=content)
 
 def _render_error(message: str) -> str:
     return f'<section class="card"><div class="error">{html.escape(message)}</div></section>'
