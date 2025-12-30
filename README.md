@@ -20,7 +20,8 @@ export GEMINI_MODEL=gemini-1.5-flash
 export ANTHROPIC_MODEL=claude-3-haiku-20240307
 export JUDGE_MODEL=gpt-4o-mini
 export OPENAI_MAX_TOKENS_PARAM=max_tokens
-export KI_COUNCIL_TIMEOUT=180  # Timeout in Sekunden (Standard: 120)
+export KI_COUNCIL_TIMEOUT=300  # Timeout in Sekunden (Standard: 300s / 5 Min)
+export KI_COUNCIL_JUDGE_TIMEOUT=600  # Judge-Timeout (Standard: 600s / 10 Min)
 ```
 
 ### Alternative: lokale Konfigurationsdatei
@@ -40,7 +41,8 @@ Du kannst eine lokale Konfigurationsdatei `.ki-council.json` verwenden (bereits 
   "judge_api_key": "sk-...",
   "judge_model": "gpt-4o-mini",
   "judge_base_url": "https://api.openai.com/v1",
-  "timeout": "180",
+  "timeout": "300",
+  "judge_timeout": "600",
   "ca_bundle": "/path/to/ca-bundle.pem",
   "insecure_ssl": "false"
 }

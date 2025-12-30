@@ -1,4 +1,5 @@
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from pathlib import Path
@@ -8,6 +9,9 @@ from ki_council.clients import LLMClient, LLMError, LLMResponse, OpenAIClient, l
 from ki_council.config import get_setting, load_config
 
 logger = logging.getLogger(__name__)
+
+# Constants
+DEFAULT_JUDGE_TIMEOUT = 600  # 10 minutes for judge to analyze multiple responses
 
 
 @lru_cache(maxsize=1)
@@ -185,7 +189,23 @@ def judge_responses(prompt: str, responses: List[LLMResponse]) -> Tuple[str, str
     successful_count = sum(1 for r in responses if not r.error)
     logger.info(f"Judging {successful_count} successful response(s) out of {len(responses)} total")
 
-    result = judge_client.generate(judge_prompt, max_tokens=16384)
-    logger.info("Judge comparison complete")
+    # Set higher timeout for judge (analyzing multiple responses takes longer)
+    judge_timeout = get_setting(config, "KI_COUNCIL_JUDGE_TIMEOUT", "judge_timeout")
+    if judge_timeout:
+        try:
+            os.environ["KI_COUNCIL_TIMEOUT"] = judge_timeout
+        except Exception:
+            pass
+    else:
+        # Use default judge timeout
+        os.environ["KI_COUNCIL_TIMEOUT"] = str(DEFAULT_JUDGE_TIMEOUT)
+
+    try:
+        result = judge_client.generate(judge_prompt, max_tokens=16384)
+        logger.info("Judge comparison complete")
+    finally:
+        # Restore normal timeout after judge completes
+        if "KI_COUNCIL_TIMEOUT" in os.environ:
+            del os.environ["KI_COUNCIL_TIMEOUT"]
 
     return responses_text, result.content
