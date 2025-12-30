@@ -12,7 +12,7 @@ export GEMINI_API_KEY=...
 export ANTHROPIC_API_KEY=...
 ```
 
-Optional kannst du Modelle und Base-URLs konfigurieren:
+Optional kannst du Modelle, Base-URLs und Timeout konfigurieren:
 
 ```bash
 export OPENAI_MODEL=gpt-4o-mini
@@ -20,6 +20,7 @@ export GEMINI_MODEL=gemini-1.5-flash
 export ANTHROPIC_MODEL=claude-3-haiku-20240307
 export JUDGE_MODEL=gpt-4o-mini
 export OPENAI_MAX_TOKENS_PARAM=max_tokens
+export KI_COUNCIL_TIMEOUT=180  # Timeout in Sekunden (Standard: 120)
 ```
 
 ### Alternative: lokale Konfigurationsdatei
@@ -39,6 +40,7 @@ Du kannst eine lokale Konfigurationsdatei `.ki-council.json` verwenden (bereits 
   "judge_api_key": "sk-...",
   "judge_model": "gpt-4o-mini",
   "judge_base_url": "https://api.openai.com/v1",
+  "timeout": "180",
   "ca_bundle": "/path/to/ca-bundle.pem",
   "insecure_ssl": "false"
 }
