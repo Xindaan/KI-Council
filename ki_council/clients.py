@@ -283,13 +283,51 @@ class GeminiClient:
         data = _post_json(url, payload, headers)
 
         try:
-            content = data["candidates"][0]["content"]["parts"][0]["text"]
+            # Check finish reason first
+            finish_reason = data.get("candidates", [{}])[0].get("finishReason", "UNKNOWN")
+
+            # Try to extract content
+            content_obj = data["candidates"][0].get("content", {})
+            parts = content_obj.get("parts", [])
+
+            if not parts or not parts[0].get("text"):
+                # Handle empty content (e.g., MAX_TOKENS, SAFETY, etc.)
+                if finish_reason == "MAX_TOKENS":
+                    # Check if this is a thinking model that used all tokens for thoughts
+                    thoughts_tokens = usage.get("thoughtsTokenCount", 0)
+                    if thoughts_tokens > 0:
+                        error_msg = (
+                            f"Gemini thinking model used {thoughts_tokens} tokens for internal reasoning "
+                            f"and hit max_tokens limit ({max_tokens}) before generating output. "
+                            f"Try --max-tokens 2048 or higher for thinking models."
+                        )
+                    else:
+                        error_msg = (
+                            f"Gemini stopped due to max_tokens limit ({max_tokens}). "
+                            "Try increasing --max-tokens."
+                        )
+                elif finish_reason in ("SAFETY", "RECITATION"):
+                    error_msg = f"Gemini blocked the response due to: {finish_reason}"
+                else:
+                    error_msg = f"Gemini returned empty content (finish_reason: {finish_reason})"
+
+                logger.warning(error_msg)
+                raise LLMError(error_msg)
+
+            content = parts[0]["text"]
+
             # Gemini may include token counts in usageMetadata
             usage = data.get("usageMetadata", {})
             tokens_prompt = usage.get("promptTokenCount")
             tokens_completion = usage.get("candidatesTokenCount")
             tokens_total = usage.get("totalTokenCount")
+
+            # Note if response was cut off
+            if finish_reason == "MAX_TOKENS":
+                logger.warning(f"Gemini response may be incomplete (finish_reason: MAX_TOKENS)")
+
         except (KeyError, IndexError, TypeError) as exc:
+            logger.error(f"Failed to parse Gemini response: {data}")
             raise LLMError(f"Unexpected Gemini response: {data}") from exc
 
         logger.debug(f"Gemini response: {tokens_total or 'unknown'} tokens used")
