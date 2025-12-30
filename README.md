@@ -1,6 +1,6 @@
 # KI-Council
 
-Ein kleines CLI, das denselben Prompt an mehrere LLMs schickt und die Antworten anschließend durch ein weiteres LLM vergleichen lässt.
+Ein Tool mit CLI und Web-UI, das denselben Prompt an mehrere LLMs schickt und die Antworten anschließend durch ein weiteres LLM vergleichen lässt.
 
 ## Setup
 
@@ -52,13 +52,33 @@ Umgebungsvariablen überschreiben Werte aus der Datei. Optional kannst du den Pf
 
 ## Nutzung
 
-### Grundlegende Verwendung
+### Web-Oberfläche (empfohlen)
+
+Die einfachste Methode ist die Web-UI mit schönem Design, Echtzeit-Updates und Dark Mode:
+
+```bash
+python -m ki_council.web
+# Öffne dann http://127.0.0.1:8000 im Browser
+```
+
+Optionen für die Web-UI:
+```bash
+# Mit Custom Host/Port
+python -m ki_council.web --host 0.0.0.0 --port 8080
+
+# Mit Custom Config
+python -m ki_council.web --config /pfad/zur/.ki-council.json
+```
+
+### Kommandozeilen-Interface (CLI)
+
+Grundlegende Verwendung:
 
 ```bash
 python -m ki_council.cli "Dein Prompt hier"
 ```
 
-### Erweiterte Optionen
+Erweiterte CLI-Optionen:
 
 ```bash
 # JSON-Ausgabe für programmatische Verarbeitung
@@ -101,6 +121,11 @@ python -m ki_council.cli "Dein Prompt hier" --providers openai,gemini --verbose 
 ### Logging
 - `--verbose` oder `-v` aktiviert detaillierte Logs zu API-Aufrufen
 - Hilfreich zum Debuggen und Verstehen des Ablaufs
+
+### Anpassbarer Judge-Prompt
+- Der Prompt für den Vergleichs-LLM kann in `ki_council/judge_prompt.txt` angepasst werden
+- Verwendet Python `str.format()` Syntax mit Platzhaltern `{prompt}` und `{responses_text}`
+- Änderungen werden automatisch beim nächsten Start übernommen
 
 ## Hinweise
 
