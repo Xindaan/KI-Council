@@ -12,8 +12,8 @@ from typing import Any, Dict, List, Optional, Protocol
 from ki_council.config import get_setting, load_config
 
 # Constants
-DEFAULT_TIMEOUT = 120  # Increased from 60 to handle slower providers
-DEFAULT_MAX_TOKENS = 512
+DEFAULT_TIMEOUT = 300  # 5 minutes for large models and complex questions
+DEFAULT_MAX_TOKENS = 4096  # Higher default for detailed responses
 
 logger = logging.getLogger(__name__)
 

@@ -259,7 +259,7 @@ PAGE_TEMPLATE = Template("""<!doctype html>
           <textarea id="prompt" name="prompt" required>$prompt</textarea>
           <div>
             <label for="max_tokens">Max tokens pro Antwort</label>
-            <input id="max_tokens" name="max_tokens" type="number" min="64" max="4096" step="32" value="$max_tokens" />
+            <input id="max_tokens" name="max_tokens" type="number" min="64" max="32768" step="128" value="$max_tokens" />
           </div>
           <div style="margin-top: 16px;">
             <button type="submit">Antworten abrufen</button>
@@ -328,7 +328,7 @@ PAGE_TEMPLATE = Template("""<!doctype html>
 
         const payload = {
           prompt: form.querySelector("#prompt").value,
-          max_tokens: Number(form.querySelector("#max_tokens").value || 2048),
+          max_tokens: Number(form.querySelector("#max_tokens").value || 4096),
         };
         const response = await fetch("/run", {
           method: "POST",
@@ -583,7 +583,7 @@ class CouncilHandler(BaseHTTPRequestHandler):
             self._send_json(payload)
             return
 
-        page = _render_page("", 2048, "")
+        page = _render_page("", 4096, "")
         self._send_page(page)
 
     def do_POST(self) -> None:
@@ -597,11 +597,11 @@ class CouncilHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "Ungültige Anfrage."}, HTTPStatus.BAD_REQUEST)
                 return
             prompt = str(payload.get("prompt", "")).strip()
-            max_tokens = payload.get("max_tokens", 2048)
+            max_tokens = payload.get("max_tokens", 4096)
             try:
                 max_tokens = int(max_tokens)
             except (TypeError, ValueError):
-                max_tokens = 2048
+                max_tokens = 4096
             if not prompt:
                 self._send_json({"error": "Bitte einen Prompt eingeben."}, HTTPStatus.BAD_REQUEST)
                 return
@@ -618,11 +618,11 @@ class CouncilHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length).decode("utf-8")
         data = parse_qs(body)
         prompt = (data.get("prompt") or [""])[0].strip()
-        max_tokens_raw = (data.get("max_tokens") or ["2048"])[0]
+        max_tokens_raw = (data.get("max_tokens") or ["4096"])[0]
         try:
             max_tokens = int(max_tokens_raw)
         except ValueError:
-            max_tokens = 2048
+            max_tokens = 4096
 
         if not prompt:
             page = _render_page(
