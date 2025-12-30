@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Protocol
 from ki_council.config import get_setting, load_config
 
 # Constants
-DEFAULT_TIMEOUT = 60
+DEFAULT_TIMEOUT = 120  # Increased from 60 to handle slower providers
 DEFAULT_MAX_TOKENS = 512
 
 logger = logging.getLogger(__name__)
@@ -64,6 +64,22 @@ class LLMClient(Protocol):
         ...
 
 
+def _get_timeout() -> int:
+    """Get configured timeout value.
+
+    Returns:
+        Timeout in seconds (default: 120)
+    """
+    config = load_config()
+    timeout_str = get_setting(config, "KI_COUNCIL_TIMEOUT", "timeout")
+    if timeout_str:
+        try:
+            return int(timeout_str)
+        except ValueError:
+            logger.warning(f"Invalid timeout value '{timeout_str}', using default {DEFAULT_TIMEOUT}")
+    return DEFAULT_TIMEOUT
+
+
 def _post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
     """Send a POST request with JSON payload and return JSON response.
 
@@ -81,17 +97,26 @@ def _post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> Di
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers, method="POST")
 
-    logger.debug(f"Sending POST request to {url}")
+    timeout = _get_timeout()
+    logger.debug(f"Sending POST request to {url} (timeout: {timeout}s)")
 
     try:
-        with urllib.request.urlopen(request, timeout=DEFAULT_TIMEOUT, context=_get_ssl_context()) as response:
+        with urllib.request.urlopen(request, timeout=timeout, context=_get_ssl_context()) as response:
             body = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8")
         logger.error(f"HTTP error {exc.code} from {url}: {error_body}")
         raise LLMError(f"Request failed: {exc.code} {exc.reason} {error_body}") from exc
     except urllib.error.URLError as exc:
+        import socket
         reason = exc.reason
+        if isinstance(reason, socket.timeout):
+            hint = (
+                f"Request timed out after {timeout}s. Try increasing the timeout with "
+                "KI_COUNCIL_TIMEOUT environment variable or 'timeout' in config file."
+            )
+            logger.error(f"Timeout error after {timeout}s: {url}")
+            raise LLMError(f"Request timed out after {timeout}s. {hint}") from exc
         if isinstance(reason, ssl.SSLCertVerificationError):
             hint = (
                 "TLS verification failed. Configure KI_COUNCIL_CA_BUNDLE/ca_bundle "
