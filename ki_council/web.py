@@ -148,6 +148,26 @@ PAGE_TEMPLATE = Template("""<!doctype html>
         margin: 8px 0 8px 20px;
         padding: 0;
       }
+      .markdown table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 16px 0;
+        font-size: 0.95rem;
+      }
+      .markdown table th {
+        background: #f2f4f8;
+        font-weight: 600;
+        text-align: left;
+        padding: 10px 12px;
+        border: 1px solid #e4e6ef;
+      }
+      .markdown table td {
+        padding: 10px 12px;
+        border: 1px solid #e4e6ef;
+      }
+      .markdown table tr:nth-child(even) {
+        background: #f9fafb;
+      }
       .results-container {
         margin-top: 24px;
       }
@@ -243,6 +263,16 @@ PAGE_TEMPLATE = Template("""<!doctype html>
           background: #2b1216;
           border-color: #5a2029;
           color: #ffb4c2;
+        }
+        .markdown table th {
+          background: #11131a;
+          border-color: #2a2f3a;
+        }
+        .markdown table td {
+          border-color: #2a2f3a;
+        }
+        .markdown table tr:nth-child(even) {
+          background: #171a21;
         }
       }
     </style>
@@ -454,13 +484,87 @@ def _render_markdown(text: str) -> str:
     lines = escaped.splitlines()
     html_lines = []
     list_open = False
+    table_mode = False
+    table_rows = []
+
+    def _is_table_row(line: str) -> bool:
+        """Check if line is a table row (starts and ends with |)."""
+        stripped = line.strip()
+        return stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") >= 3
+
+    def _is_table_separator(line: str) -> bool:
+        """Check if line is a table separator (|---|---|)."""
+        stripped = line.strip()
+        if not stripped.startswith("|") or not stripped.endswith("|"):
+            return False
+        parts = [p.strip() for p in stripped.split("|")[1:-1]]
+        return all(re.match(r"^:?-+:?$", p) for p in parts if p)
+
+    def _parse_table_row(line: str) -> list:
+        """Parse a table row into cells."""
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            stripped = stripped[1:]
+        if stripped.endswith("|"):
+            stripped = stripped[:-1]
+        return [cell.strip() for cell in stripped.split("|")]
+
+    def _flush_table() -> None:
+        """Render accumulated table rows."""
+        nonlocal table_mode, table_rows
+        if not table_rows:
+            return
+
+        html_lines.append("<table>")
+        # First row is header
+        if table_rows:
+            html_lines.append("<thead><tr>")
+            for cell in table_rows[0]:
+                html_lines.append(f"<th>{cell}</th>")
+            html_lines.append("</tr></thead>")
+        # Rest are body rows
+        if len(table_rows) > 1:
+            html_lines.append("<tbody>")
+            for row in table_rows[1:]:
+                html_lines.append("<tr>")
+                for cell in row:
+                    html_lines.append(f"<td>{cell}</td>")
+                html_lines.append("</tr>")
+            html_lines.append("</tbody>")
+        html_lines.append("</table>")
+
+        table_mode = False
+        table_rows = []
+
     for line in lines:
         stripped = line.strip()
+
+        # Handle empty lines
         if not stripped:
+            if table_mode:
+                _flush_table()
             if list_open:
                 html_lines.append("</ul>")
                 list_open = False
             continue
+
+        # Check for table rows
+        if _is_table_row(stripped):
+            if list_open:
+                html_lines.append("</ul>")
+                list_open = False
+            if _is_table_separator(stripped):
+                # Skip separator line, but stay in table mode
+                continue
+            table_mode = True
+            table_rows.append(_parse_table_row(stripped))
+            continue
+
+        # If we were in table mode but this line isn't a table, flush the table
+        if table_mode:
+            _flush_table()
+
+        # Handle headings
         if stripped.startswith("### "):
             if list_open:
                 html_lines.append("</ul>")
@@ -479,18 +583,27 @@ def _render_markdown(text: str) -> str:
                 list_open = False
             html_lines.append(f"<h2>{stripped[2:]}</h2>")
             continue
+
+        # Handle lists
         if stripped.startswith(("- ", "* ")):
             if not list_open:
                 html_lines.append("<ul>")
                 list_open = True
             html_lines.append(f"<li>{stripped[2:]}</li>")
             continue
+
+        # Regular paragraph
         if list_open:
             html_lines.append("</ul>")
             list_open = False
         html_lines.append(f"<p>{stripped}</p>")
+
+    # Flush any remaining table or list
+    if table_mode:
+        _flush_table()
     if list_open:
         html_lines.append("</ul>")
+
     return "".join(html_lines)
 
 
