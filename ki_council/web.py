@@ -148,6 +148,26 @@ PAGE_TEMPLATE = Template("""<!doctype html>
         margin: 8px 0 8px 20px;
         padding: 0;
       }
+      .markdown table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 16px 0;
+        font-size: 0.95rem;
+      }
+      .markdown table th {
+        background: #f2f4f8;
+        font-weight: 600;
+        text-align: left;
+        padding: 10px 12px;
+        border: 1px solid #e4e6ef;
+      }
+      .markdown table td {
+        padding: 10px 12px;
+        border: 1px solid #e4e6ef;
+      }
+      .markdown table tr:nth-child(even) {
+        background: #f9fafb;
+      }
       .results-container {
         margin-top: 24px;
       }
@@ -244,6 +264,16 @@ PAGE_TEMPLATE = Template("""<!doctype html>
           border-color: #5a2029;
           color: #ffb4c2;
         }
+        .markdown table th {
+          background: #11131a;
+          border-color: #2a2f3a;
+        }
+        .markdown table td {
+          border-color: #2a2f3a;
+        }
+        .markdown table tr:nth-child(even) {
+          background: #171a21;
+        }
       }
     </style>
   </head>
@@ -258,8 +288,8 @@ PAGE_TEMPLATE = Template("""<!doctype html>
           <label for="prompt">Prompt</label>
           <textarea id="prompt" name="prompt" required>$prompt</textarea>
           <div>
-            <label for="max_tokens">Max tokens pro Antwort</label>
-            <input id="max_tokens" name="max_tokens" type="number" min="64" max="4096" step="32" value="$max_tokens" />
+            <label for="max_tokens">Max Tokens pro Antwort</label>
+            <input id="max_tokens" name="max_tokens" type="number" min="64" max="32768" step="64" value="$max_tokens" />
           </div>
           <div style="margin-top: 16px;">
             <button type="submit">Antworten abrufen</button>
@@ -328,7 +358,7 @@ PAGE_TEMPLATE = Template("""<!doctype html>
 
         const payload = {
           prompt: form.querySelector("#prompt").value,
-          max_tokens: Number(form.querySelector("#max_tokens").value || 2048),
+          max_tokens: Number(form.querySelector("#max_tokens").value || 4096),
         };
         const response = await fetch("/run", {
           method: "POST",
@@ -400,8 +430,8 @@ def _run_job(job_id: str) -> None:
         _update_job(
             job_id,
             state="running",
-            message="Anfragen werden versendet...",
-            total=len(clients),
+            message="Anfragen werden an LLMs versendet...",
+            total=len(clients) + 1,  # +1 for judge
             completed=0,
         )
 
@@ -428,13 +458,21 @@ def _run_job(job_id: str) -> None:
                 )
 
         responses.sort(key=lambda r: r.provider)
+
+        # Update status before judge analysis
+        _update_job(
+            job_id,
+            completed=len(clients),
+            message="Alle Antworten erhalten. Judge-Modell analysiert und vergleicht die Antworten...",
+        )
+
         responses_text, judgment = judge_responses(job.prompt, responses)
         judge_prompt = build_judge_prompt(job.prompt, responses_text)
         content = _render_results(responses, judgment, judge_prompt)
-        _update_job(job_id, state="done", message="Fertig.", html=content)
+        _update_job(job_id, state="done", message="Fertig.", html=content, completed=len(clients) + 1)
     except Exception as exc:  # noqa: BLE001
         content = _render_error(str(exc))
-        _update_job(job_id, state="error", message="Fehler bei der Anfrage.", html=content)
+        _update_job(job_id, state="error", message=f"Fehler: {exc}", html=content)
 
 def _render_error(message: str) -> str:
     return f'<section class="card"><div class="error">{html.escape(message)}</div></section>'
@@ -446,13 +484,87 @@ def _render_markdown(text: str) -> str:
     lines = escaped.splitlines()
     html_lines = []
     list_open = False
+    table_mode = False
+    table_rows = []
+
+    def _is_table_row(line: str) -> bool:
+        """Check if line is a table row (starts and ends with |)."""
+        stripped = line.strip()
+        return stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") >= 3
+
+    def _is_table_separator(line: str) -> bool:
+        """Check if line is a table separator (|---|---|)."""
+        stripped = line.strip()
+        if not stripped.startswith("|") or not stripped.endswith("|"):
+            return False
+        parts = [p.strip() for p in stripped.split("|")[1:-1]]
+        return all(re.match(r"^:?-+:?$", p) for p in parts if p)
+
+    def _parse_table_row(line: str) -> list:
+        """Parse a table row into cells."""
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            stripped = stripped[1:]
+        if stripped.endswith("|"):
+            stripped = stripped[:-1]
+        return [cell.strip() for cell in stripped.split("|")]
+
+    def _flush_table() -> None:
+        """Render accumulated table rows."""
+        nonlocal table_mode, table_rows
+        if not table_rows:
+            return
+
+        html_lines.append("<table>")
+        # First row is header
+        if table_rows:
+            html_lines.append("<thead><tr>")
+            for cell in table_rows[0]:
+                html_lines.append(f"<th>{cell}</th>")
+            html_lines.append("</tr></thead>")
+        # Rest are body rows
+        if len(table_rows) > 1:
+            html_lines.append("<tbody>")
+            for row in table_rows[1:]:
+                html_lines.append("<tr>")
+                for cell in row:
+                    html_lines.append(f"<td>{cell}</td>")
+                html_lines.append("</tr>")
+            html_lines.append("</tbody>")
+        html_lines.append("</table>")
+
+        table_mode = False
+        table_rows = []
+
     for line in lines:
         stripped = line.strip()
+
+        # Handle empty lines
         if not stripped:
+            if table_mode:
+                _flush_table()
             if list_open:
                 html_lines.append("</ul>")
                 list_open = False
             continue
+
+        # Check for table rows
+        if _is_table_row(stripped):
+            if list_open:
+                html_lines.append("</ul>")
+                list_open = False
+            if _is_table_separator(stripped):
+                # Skip separator line, but stay in table mode
+                continue
+            table_mode = True
+            table_rows.append(_parse_table_row(stripped))
+            continue
+
+        # If we were in table mode but this line isn't a table, flush the table
+        if table_mode:
+            _flush_table()
+
+        # Handle headings
         if stripped.startswith("### "):
             if list_open:
                 html_lines.append("</ul>")
@@ -471,18 +583,27 @@ def _render_markdown(text: str) -> str:
                 list_open = False
             html_lines.append(f"<h2>{stripped[2:]}</h2>")
             continue
+
+        # Handle lists
         if stripped.startswith(("- ", "* ")):
             if not list_open:
                 html_lines.append("<ul>")
                 list_open = True
             html_lines.append(f"<li>{stripped[2:]}</li>")
             continue
+
+        # Regular paragraph
         if list_open:
             html_lines.append("</ul>")
             list_open = False
         html_lines.append(f"<p>{stripped}</p>")
+
+    # Flush any remaining table or list
+    if table_mode:
+        _flush_table()
     if list_open:
         html_lines.append("</ul>")
+
     return "".join(html_lines)
 
 
@@ -583,7 +704,7 @@ class CouncilHandler(BaseHTTPRequestHandler):
             self._send_json(payload)
             return
 
-        page = _render_page("", 2048, "")
+        page = _render_page("", 4096, "")
         self._send_page(page)
 
     def do_POST(self) -> None:
@@ -597,11 +718,11 @@ class CouncilHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "Ungültige Anfrage."}, HTTPStatus.BAD_REQUEST)
                 return
             prompt = str(payload.get("prompt", "")).strip()
-            max_tokens = payload.get("max_tokens", 2048)
+            max_tokens = payload.get("max_tokens", 4096)
             try:
                 max_tokens = int(max_tokens)
             except (TypeError, ValueError):
-                max_tokens = 2048
+                max_tokens = 4096
             if not prompt:
                 self._send_json({"error": "Bitte einen Prompt eingeben."}, HTTPStatus.BAD_REQUEST)
                 return
@@ -618,11 +739,11 @@ class CouncilHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length).decode("utf-8")
         data = parse_qs(body)
         prompt = (data.get("prompt") or [""])[0].strip()
-        max_tokens_raw = (data.get("max_tokens") or ["2048"])[0]
+        max_tokens_raw = (data.get("max_tokens") or ["4096"])[0]
         try:
             max_tokens = int(max_tokens_raw)
         except ValueError:
-            max_tokens = 2048
+            max_tokens = 4096
 
         if not prompt:
             page = _render_page(

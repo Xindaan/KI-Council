@@ -1,10 +1,102 @@
-Du bist ein Analyst, der Antworten verschiedener LLMs vergleicht.
-Analysiere die Antworten auf Gemeinsamkeiten, Unterschiede, Stärken, Schwächen
-und gib eine kurze Empfehlung. Antworte strukturiert mit den Abschnitten:
-Gemeinsamkeiten, Unterschiede, Bewertung, Empfehlung.
+AUFGABE
+Du bist das Judge-Modell: Erstelle eine überprüfbare Synthese aus mehreren Modellantworten zum selben Ursprungs-Prompt.
+Ziel: maximale Korrektheit, klare Dissensdiagnose, keine Scheinkonsense, keine erfundenen Quellen.
+Zusätzlich: Gib am Ende ein modifiziertes, konsolidiertes Gesamtergebnis aus, das die Synthese aller Modellinputs darstellt.
 
-Ursprungs-Prompt:
-{prompt}
+EINGABEN
 
-Antworten:
-{responses_text}
+* judge_model: {judge_model}
+* other_providers: {other_providers}
+* Ursprungs-Prompt: {prompt}
+* Modellantworten (mit Modellnamen/IDs): {responses_text}
+
+REGELN (wichtig)
+
+1. Keine Quellen halluzinieren:
+
+   * Nutze nur Quellen/Links, die in den Modellantworten bereits genannt wurden.
+   * Wenn keine Quellen vorhanden sind: schreibe "Keine Quelle in Antworten" und liste stattdessen 1–2 konkrete Verifikationsquellen-TYPEN (z.B. Standard/Norm, Paper, offizielles Statistikamt) + Suchbegriffe, aber keine erfundenen URLs.
+2. Atomisiere Claims:
+
+   * Zerlege Aussagen in kurze, überprüfbare Einzel-Claims (max. 1 Satz), vergib Claim-IDs C1..Cn.
+   * Merge Duplikate/Synonyme und notiere Alias-IDs.
+3. Trenne Konfliktarten:
+
+   * Kennzeichne pro Claim: [Fakt] / [Definition] / [Kausal] / [Prognose] / [Wert/Policy] / [Handlungsempfehlung].
+4. Judge-Disziplin:
+
+   * Füge keine neuen Sachbehauptungen hinzu, außer als klar markierte "Judge-Hypothese" (mit Prüfplan).
+5. Skalierung:
+
+   * Wenn zu lang: priorisiere die Top 10 Claims nach (Impact × Streitgrad × Entscheidungsrelevanz) und liste den Rest unter "Weitere Claims (gekürzt)".
+6. Traceability / individuelle Inputs sichtbar machen:
+
+   * Jeder Kernpunkt im Gesamtergebnis muss mit Modell-Attribution versehen werden: [A], [B], [C] oder Kombinationen [A,B], etc.
+   * Wenn ein Modell einen relevanten Unique-Punkt hat, entscheide explizit: (i) übernehmen, (ii) verwerfen, oder (iii) offen lassen – jeweils kurz begründen.
+
+AUSGABEFORMAT
+
+A) Claim-Liste (Atomisierung)
+
+* C1 [Typ]: Claim-Text (kurz)
+  Unterstützt von: {{Modelle}}
+  Widersprochen von: {{Modelle}}
+  Unklar/implizit: {{Modelle}}
+  Evidenz in Antworten: (Paraphrase in 1 Zeile, keine langen Quotes)
+
+B) Konsens (alle Modelle)
+
+* Bullet-Liste der Claim-IDs + 1 Satz Begründung, warum Konsens (inkl. definitorischer Einschränkungen)
+
+C) Mehrheitsmeinung
+
+* Für jeden Claim: Claim-ID + zustimmende Modelle + präzisester Gegenpunkt der anderen Modelle
+* Kennzeichne, ob Dissens eher Daten-, Definitions- oder Werte-getrieben ist
+
+D) Umstritten / Unique
+
+* Claims, die nur ein Modell bringt: Claim-ID + mutmaßlicher Grund (z.B. andere Prämisse, anderes Ziel, Missing context)
+* "Was zur Klärung nötig ist": 1–2 konkrete Checks/Experimente/Quellenarten
+
+E) Annahmen-Delta
+
+* Liste der zentralen Prämissen, in denen Modelle auseinanderlaufen (max. 8)
+* Mappe jede Annahme auf die betroffenen Claim-IDs
+
+F) Evidenz-Matrix (kurz)
+
+* Tabelle in Textform:
+  Claim-ID | Evidenz in Antworten (ja/nein/weak) | Quelle aus Antworten (falls vorhanden, mit Datum) | Verifikations-Check (1 Zeile)
+* Wenn keine Quellen in Antworten: Quelle-Spalte = "—" und Check = konkrete Suchstrategie
+
+G) STEELMAN → KRITIK → UPDATE (gegenüber anderen Modellen)
+
+1. Steelman: Formuliere die stärksten Versionen der Hauptthesen der anderen Modelle ({other_providers}) – keine Strohmänner.
+2. Kritik: Präzise, testbare Gegenargumente + welche Evidenz die Kritik stützen oder falsifizieren würde.
+3. Update: Welche Punkte übernimmst du und welche verwirfst du – jeweils mit kurzer Begründung und betroffenen Claim-IDs.
+
+H) Entscheidungen (3–5) + Konfidenz
+
+* Entscheidung D1..D5: klarer Satz
+  Begründung: relevante Claim-IDs
+  Konfidenz: 0–1 (kalibriert; 0.7 = "wahrscheinlich, aber prüfbar")
+
+I) Offene Fragen & Next Steps
+
+* 5–10 verifizierbare Checks (so formuliert, dass ein Mensch sie durchführen kann)
+* Priorisiere nach Informationsgewinn pro Aufwand
+
+J) GESAMTERGEBNIS (Finale Synthese-Antwort auf den Ursprungs-Prompt)
+
+* Schreibe jetzt eine zusammenhängende, gut strukturierte Antwort auf {prompt}.
+* Nutze die besten Punkte aus allen Modellen; integriere Konflikte transparent.
+* Jeder Absatz oder Bullet muss Modell-Attribution tragen, z.B.:
+
+  * Punkt ... [A,B]
+  * Punkt ... [C]
+* Wenn du etwas als "Judge-Hypothese" ergänzt: markiere es explizit als (Judge-Hypothese) und gib 1 Prüf-Check dazu.
+* Maximal: so lang wie nötig, so kurz wie möglich; Priorität auf Entscheidungsrelevanz und Klarheit.
+
+SOURCES (nur falls in Antworten vorhanden; am Ende, nicht inline)
+
+* Liste der in den Antworten genannten Quellen/Links mit Datum (wenn vorhanden)

@@ -1,4 +1,5 @@
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from pathlib import Path
@@ -12,17 +13,33 @@ from ki_council.config import get_setting, load_config
 
 logger = logging.getLogger(__name__)
 
+# Constants
+DEFAULT_JUDGE_TIMEOUT = 600  # 10 minutes for judge to analyze multiple responses
+
 
 @lru_cache(maxsize=1)
 def _load_judge_prompt_template() -> str:
     """Load the judge prompt template from file.
 
+    Searches for templates in this order:
+    1. judge_prompt.txt.local (user's custom version, gitignored)
+    2. judge_prompt.txt (default from repository)
+
     Returns:
         Template string with {prompt} and {responses_text} placeholders
     """
-    template_path = Path(__file__).with_name("judge_prompt.txt")
-    logger.debug(f"Loading judge prompt template from {template_path}")
-    return template_path.read_text(encoding="utf-8")
+    base_path = Path(__file__).parent
+
+    # Try local override first
+    local_template = base_path / "judge_prompt.txt.local"
+    if local_template.exists():
+        logger.info(f"Using custom judge prompt from {local_template}")
+        return local_template.read_text(encoding="utf-8")
+
+    # Fall back to default
+    default_template = base_path / "judge_prompt.txt"
+    logger.debug(f"Loading default judge prompt from {default_template}")
+    return default_template.read_text(encoding="utf-8")
 
 
 @lru_cache(maxsize=1)
@@ -133,9 +150,28 @@ def format_responses(responses: Iterable[LLMResponse]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
-def build_judge_prompt(prompt: str, responses_text: str) -> str:
+def build_judge_prompt(prompt: str, responses_text: str, judge_model: str = "", other_providers: str = "") -> str:
+    """Build the prompt for the judge LLM to compare responses.
+
+    Loads the judge prompt template from judge_prompt.txt and fills in the
+    placeholders with the provided prompt and responses.
+
+    Args:
+        prompt: Original user prompt
+        responses_text: Formatted responses from all providers
+        judge_model: Name of the judge model (optional)
+        other_providers: Comma-separated list of other provider names (optional)
+
+    Returns:
+        Judge prompt in German
+    """
     template = _load_judge_prompt_template()
-    return template.format(prompt=prompt, responses_text=responses_text)
+    return template.format(
+        prompt=prompt,
+        responses_text=responses_text,
+        judge_model=judge_model,
+        other_providers=other_providers
+    )
 
 
 def judge_responses(prompt: str, responses: List[LLMResponse]) -> Tuple[str, str]:
@@ -176,6 +212,40 @@ def judge_responses(prompt: str, responses: List[LLMResponse]) -> Tuple[str, str
     logger.info(f"Using judge model {judge_model} for comparison")
 
     responses_text = format_responses(responses)
-    judge_prompt = build_judge_prompt(prompt, responses_text)
-    result = judge_client.generate(judge_prompt, max_tokens=16384)
+
+    # Determine other providers (non-judge models that responded successfully)
+    successful_providers = [r.provider for r in responses if not r.error]
+    # Filter out "openai" if that's the judge (assuming judge uses OpenAI by default)
+    other_providers = [p for p in successful_providers if p != "openai"]
+    if not other_providers:
+        # If only OpenAI responded or judge is not OpenAI, use all successful providers
+        other_providers = successful_providers
+
+    other_providers_str = ", ".join(sorted(set(other_providers)))
+
+    judge_prompt = build_judge_prompt(prompt, responses_text, judge_model, other_providers_str)
+
+    # Filter out failed responses for judgment (optional: include them for context)
+    successful_count = sum(1 for r in responses if not r.error)
+    logger.info(f"Judging {successful_count} successful response(s) out of {len(responses)} total")
+
+    # Set higher timeout for judge (analyzing multiple responses takes longer)
+    judge_timeout = get_setting(config, "KI_COUNCIL_JUDGE_TIMEOUT", "judge_timeout")
+    if judge_timeout:
+        try:
+            os.environ["KI_COUNCIL_TIMEOUT"] = judge_timeout
+        except Exception:
+            pass
+    else:
+        # Use default judge timeout
+        os.environ["KI_COUNCIL_TIMEOUT"] = str(DEFAULT_JUDGE_TIMEOUT)
+
+    try:
+        result = judge_client.generate(judge_prompt, max_tokens=16384)
+        logger.info("Judge comparison complete")
+    finally:
+        # Restore normal timeout after judge completes
+        if "KI_COUNCIL_TIMEOUT" in os.environ:
+            del os.environ["KI_COUNCIL_TIMEOUT"]
+
     return responses_text, result.content

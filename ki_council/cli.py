@@ -22,8 +22,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=2048,
-        help="Max tokens per model response.",
+        default=4096,
+        help="Max tokens per model response (default: 4096).",
     )
     parser.add_argument(
         "--json",

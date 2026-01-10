@@ -12,8 +12,8 @@ from typing import Any, Dict, List, Optional, Protocol
 from ki_council.config import get_setting, load_config
 
 # Constants
-DEFAULT_TIMEOUT = 60
-DEFAULT_MAX_TOKENS = 512
+DEFAULT_TIMEOUT = 300  # 5 minutes for large models and complex questions
+DEFAULT_MAX_TOKENS = 4096  # Higher default for detailed responses
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,22 @@ class LLMClient(Protocol):
         ...
 
 
+def _get_timeout() -> int:
+    """Get configured timeout value.
+
+    Returns:
+        Timeout in seconds (default: 120)
+    """
+    config = load_config()
+    timeout_str = get_setting(config, "KI_COUNCIL_TIMEOUT", "timeout")
+    if timeout_str:
+        try:
+            return int(timeout_str)
+        except ValueError:
+            logger.warning(f"Invalid timeout value '{timeout_str}', using default {DEFAULT_TIMEOUT}")
+    return DEFAULT_TIMEOUT
+
+
 def _post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
     """Send a POST request with JSON payload and return JSON response.
 
@@ -81,17 +97,26 @@ def _post_json(url: str, payload: Dict[str, Any], headers: Dict[str, str]) -> Di
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers, method="POST")
 
-    logger.debug(f"Sending POST request to {url}")
+    timeout = _get_timeout()
+    logger.debug(f"Sending POST request to {url} (timeout: {timeout}s)")
 
     try:
-        with urllib.request.urlopen(request, timeout=DEFAULT_TIMEOUT, context=_get_ssl_context()) as response:
+        with urllib.request.urlopen(request, timeout=timeout, context=_get_ssl_context()) as response:
             body = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8")
         logger.error(f"HTTP error {exc.code} from {url}: {error_body}")
         raise LLMError(f"Request failed: {exc.code} {exc.reason} {error_body}") from exc
     except urllib.error.URLError as exc:
+        import socket
         reason = exc.reason
+        if isinstance(reason, socket.timeout):
+            hint = (
+                f"Request timed out after {timeout}s. Try increasing the timeout with "
+                "KI_COUNCIL_TIMEOUT environment variable or 'timeout' in config file."
+            )
+            logger.error(f"Timeout error after {timeout}s: {url}")
+            raise LLMError(f"Request timed out after {timeout}s. {hint}") from exc
         if isinstance(reason, ssl.SSLCertVerificationError):
             hint = (
                 "TLS verification failed. Configure KI_COUNCIL_CA_BUNDLE/ca_bundle "
@@ -263,8 +288,65 @@ class GeminiClient:
 
         logger.info(f"Requesting Gemini completion with model {self.model}")
         data = _post_json(url, payload, headers)
-        content = self._extract_text(data)
-        return LLMResponse(provider="gemini", model=self.model, content=content.strip())
+
+        try:
+            # Check finish reason first
+            finish_reason = data.get("candidates", [{}])[0].get("finishReason", "UNKNOWN")
+
+            # Try to extract content
+            content_obj = data["candidates"][0].get("content", {})
+            parts = content_obj.get("parts", [])
+
+            if not parts or not parts[0].get("text"):
+                # Handle empty content (e.g., MAX_TOKENS, SAFETY, etc.)
+                if finish_reason == "MAX_TOKENS":
+                    # Check if this is a thinking model that used all tokens for thoughts
+                    thoughts_tokens = usage.get("thoughtsTokenCount", 0)
+                    if thoughts_tokens > 0:
+                        error_msg = (
+                            f"Gemini thinking model used {thoughts_tokens} tokens for internal reasoning "
+                            f"and hit max_tokens limit ({max_tokens}) before generating output. "
+                            f"Try --max-tokens 2048 or higher for thinking models."
+                        )
+                    else:
+                        error_msg = (
+                            f"Gemini stopped due to max_tokens limit ({max_tokens}). "
+                            "Try increasing --max-tokens."
+                        )
+                elif finish_reason in ("SAFETY", "RECITATION"):
+                    error_msg = f"Gemini blocked the response due to: {finish_reason}"
+                else:
+                    error_msg = f"Gemini returned empty content (finish_reason: {finish_reason})"
+
+                logger.warning(error_msg)
+                raise LLMError(error_msg)
+
+            content = parts[0]["text"]
+
+            # Gemini may include token counts in usageMetadata
+            usage = data.get("usageMetadata", {})
+            tokens_prompt = usage.get("promptTokenCount")
+            tokens_completion = usage.get("candidatesTokenCount")
+            tokens_total = usage.get("totalTokenCount")
+
+            # Note if response was cut off
+            if finish_reason == "MAX_TOKENS":
+                logger.warning(f"Gemini response may be incomplete (finish_reason: MAX_TOKENS)")
+
+        except (KeyError, IndexError, TypeError) as exc:
+            logger.error(f"Failed to parse Gemini response: {data}")
+            raise LLMError(f"Unexpected Gemini response: {data}") from exc
+
+        logger.debug(f"Gemini response: {tokens_total or 'unknown'} tokens used")
+
+        return LLMResponse(
+            provider="gemini",
+            model=self.model,
+            content=content.strip(),
+            tokens_used=tokens_total,
+            tokens_prompt=tokens_prompt,
+            tokens_completion=tokens_completion,
+        )
 
 
 class AnthropicClient:

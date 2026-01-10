@@ -12,7 +12,7 @@ export GEMINI_API_KEY=...
 export ANTHROPIC_API_KEY=...
 ```
 
-Optional kannst du Modelle und Base-URLs konfigurieren:
+Optional kannst du Modelle, Base-URLs und Timeout konfigurieren:
 
 ```bash
 export OPENAI_MODEL=gpt-4o-mini
@@ -20,6 +20,8 @@ export GEMINI_MODEL=gemini-1.5-flash
 export ANTHROPIC_MODEL=claude-3-haiku-20240307
 export JUDGE_MODEL=gpt-4o-mini
 export OPENAI_MAX_TOKENS_PARAM=max_tokens
+export KI_COUNCIL_TIMEOUT=300  # Timeout in Sekunden (Standard: 300s / 5 Min)
+export KI_COUNCIL_JUDGE_TIMEOUT=600  # Judge-Timeout (Standard: 600s / 10 Min)
 ```
 
 ### Alternative: lokale Konfigurationsdatei
@@ -39,6 +41,8 @@ Du kannst eine lokale Konfigurationsdatei `.ki-council.json` verwenden (bereits 
   "judge_api_key": "sk-...",
   "judge_model": "gpt-4o-mini",
   "judge_base_url": "https://api.openai.com/v1",
+  "timeout": "300",
+  "judge_timeout": "600",
   "ca_bundle": "/path/to/ca-bundle.pem",
   "insecure_ssl": "false"
 }
@@ -134,9 +138,14 @@ python -m ki_council.cli "Dein Prompt hier" --providers openai,gemini --verbose 
 - Hilfreich zum Debuggen und Verstehen des Ablaufs
 
 ### Anpassbarer Judge-Prompt
-- Der Prompt für den Vergleichs-LLM kann in `ki_council/judge_prompt.txt` angepasst werden
-- Verwendet Python `str.format()` Syntax mit Platzhaltern `{prompt}` und `{responses_text}`
-- Änderungen werden automatisch beim nächsten Start übernommen
+- **Standard-Prompt:** `ki_council/judge_prompt.txt` (wird von Git verwaltet)
+- **Lokaler Override:** `ki_council/judge_prompt.txt.local` (wird von Git ignoriert, überschreibt Standard)
+- Verfügbare Platzhalter:
+  - `{prompt}` - Original-Prompt des Nutzers
+  - `{responses_text}` - Formatierte Antworten aller Provider
+  - `{judge_model}` - Name des Judge-Modells (z.B. "gpt-4o-mini")
+  - `{other_providers}` - Komma-getrennte Liste der anderen Provider (z.B. "anthropic, gemini")
+- **Tipp:** Kopiere `judge_prompt.txt` nach `judge_prompt.txt.local` für eigene Anpassungen, die nicht von Git überschrieben werden
 
 ## Hinweise
 
