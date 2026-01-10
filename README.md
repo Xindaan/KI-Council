@@ -52,9 +52,12 @@ Umgebungsvariablen überschreiben Werte aus der Datei. Optional kannst du den Pf
 
 ## Nutzung
 
-### Web-Oberfläche (empfohlen)
+Installiere das Paket einmalig im Projektordner (achte auf den abschließenden Punkt und führe es im Repo-Root aus):
 
-Die einfachste Methode ist die Web-UI mit schönem Design, Echtzeit-Updates und Dark Mode:
+```bash
+cd /pfad/zum/KI-Council
+python3 -m pip install -e .
+```
 
 ```bash
 python -m ki_council.web
@@ -70,9 +73,17 @@ python -m ki_council.web --host 0.0.0.0 --port 8080
 python -m ki_council.web --config /pfad/zur/.ki-council.json
 ```
 
-### Kommandozeilen-Interface (CLI)
+### Web-Oberfläche
 
-Grundlegende Verwendung:
+Starte eine einfache Web-UI für den Council:
+
+```bash
+python -m ki_council.web --host 127.0.0.1 --port 8000
+```
+
+Danach im Browser öffnen: `http://127.0.0.1:8000`
+
+Oder als JSON-Ausgabe:
 
 ```bash
 python -m ki_council.cli "Dein Prompt hier"

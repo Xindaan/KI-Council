@@ -4,7 +4,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
-from ki_council.clients import LLMClient, LLMError, LLMResponse, OpenAIClient, load_clients
+from functools import lru_cache
+from pathlib import Path
+
+from ki_council.clients import LLMResponse, OpenAIClient, load_clients
 from ki_council.config import get_setting, load_config
 
 logger = logging.getLogger(__name__)
@@ -19,6 +22,12 @@ def _load_judge_prompt_template() -> str:
     """
     template_path = Path(__file__).with_name("judge_prompt.txt")
     logger.debug(f"Loading judge prompt template from {template_path}")
+    return template_path.read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=1)
+def _load_judge_prompt_template() -> str:
+    template_path = Path(__file__).with_name("judge_prompt.txt")
     return template_path.read_text(encoding="utf-8")
 
 
@@ -125,18 +134,6 @@ def format_responses(responses: Iterable[LLMResponse]) -> str:
 
 
 def build_judge_prompt(prompt: str, responses_text: str) -> str:
-    """Build the prompt for the judge LLM to compare responses.
-
-    Loads the judge prompt template from judge_prompt.txt and fills in the
-    placeholders with the provided prompt and responses.
-
-    Args:
-        prompt: Original user prompt
-        responses_text: Formatted responses from all providers
-
-    Returns:
-        Judge prompt in German
-    """
     template = _load_judge_prompt_template()
     return template.format(prompt=prompt, responses_text=responses_text)
 
@@ -180,12 +177,5 @@ def judge_responses(prompt: str, responses: List[LLMResponse]) -> Tuple[str, str
 
     responses_text = format_responses(responses)
     judge_prompt = build_judge_prompt(prompt, responses_text)
-
-    # Filter out failed responses for judgment (optional: include them for context)
-    successful_count = sum(1 for r in responses if not r.error)
-    logger.info(f"Judging {successful_count} successful response(s) out of {len(responses)} total")
-
     result = judge_client.generate(judge_prompt, max_tokens=16384)
-    logger.info("Judge comparison complete")
-
     return responses_text, result.content
