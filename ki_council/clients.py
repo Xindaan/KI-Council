@@ -256,19 +256,26 @@ class GeminiClient:
         self.api_key = api_key
         self.model = model
 
-    def generate(self, prompt: str, max_tokens: int = DEFAULT_MAX_TOKENS) -> LLMResponse:
-        """Generate a response using Google's Gemini API.
+    def _extract_text(self, data: Dict[str, Any]) -> str:
+        try:
+            candidate = data["candidates"][0]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise LLMError(f"Unexpected Gemini response: {data}") from exc
 
-        Args:
-            prompt: The text prompt
-            max_tokens: Maximum tokens to generate
+        parts = candidate.get("content", {}).get("parts", [])
+        text_chunks = [part.get("text", "") for part in parts if isinstance(part, dict)]
+        text = "".join(text_chunks).strip()
+        if text:
+            return text
 
-        Returns:
-            LLMResponse with generated content
+        finish_reason = candidate.get("finishReason", "unknown")
+        return (
+            "Gemini lieferte keinen Textinhalt. "
+            f"finishReason={finish_reason}. "
+            "Erhöhe ggf. das Token-Limit oder verwende ein anderes Modell."
+        )
 
-        Raises:
-            LLMError: If the API request fails
-        """
+    def generate(self, prompt: str, max_tokens: int = 512) -> LLMResponse:
         url = (
             "https://generativelanguage.googleapis.com/v1beta/"
             f"models/{self.model}:generateContent?key={self.api_key}"

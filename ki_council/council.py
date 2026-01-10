@@ -5,7 +5,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
-from ki_council.clients import LLMClient, LLMError, LLMResponse, OpenAIClient, load_clients
+from functools import lru_cache
+from pathlib import Path
+
+from ki_council.clients import LLMResponse, OpenAIClient, load_clients
 from ki_council.config import get_setting, load_config
 
 logger = logging.getLogger(__name__)
@@ -37,6 +40,12 @@ def _load_judge_prompt_template() -> str:
     default_template = base_path / "judge_prompt.txt"
     logger.debug(f"Loading default judge prompt from {default_template}")
     return default_template.read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=1)
+def _load_judge_prompt_template() -> str:
+    template_path = Path(__file__).with_name("judge_prompt.txt")
+    return template_path.read_text(encoding="utf-8")
 
 
 def gather_responses(prompt: str, max_tokens: int = 512) -> List[LLMResponse]:
