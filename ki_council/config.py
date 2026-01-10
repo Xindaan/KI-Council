@@ -1,3 +1,9 @@
+"""Configuration management for KI-Council.
+
+This module handles loading and parsing configuration from JSON files and environment variables.
+Supports lenient JSON parsing with comments, trailing commas, and smart quotes.
+"""
+
 import json
 import os
 import re
@@ -25,6 +31,11 @@ _SMART_QUOTE_TRANSLATION = str.maketrans(
 
 
 def _find_default_config_path() -> Optional[Path]:
+    """Search for the default config file in current and parent directories.
+
+    Returns:
+        Path to the config file if found, None otherwise
+    """
     for candidate_dir in [Path.cwd(), *Path.cwd().parents]:
         candidate = candidate_dir / DEFAULT_CONFIG_NAME
         if candidate.is_file():
@@ -33,6 +44,14 @@ def _find_default_config_path() -> Optional[Path]:
 
 
 def resolve_config_path() -> Optional[Path]:
+    """Resolve the path to the configuration file.
+
+    First checks the KI_COUNCIL_CONFIG environment variable, then searches
+    for the default config file in current and parent directories.
+
+    Returns:
+        Path to the config file if found, None otherwise
+    """
     configured_path = os.getenv(CONFIG_ENV_VAR)
     if configured_path:
         return Path(configured_path).expanduser()
@@ -40,6 +59,19 @@ def resolve_config_path() -> Optional[Path]:
 
 
 def load_config() -> Dict[str, Any]:
+    """Load and parse the configuration file.
+
+    Performs lenient JSON parsing that tolerates:
+    - Comments (// single-line, # shell-style, /* multi-line */)
+    - Trailing commas
+    - Smart quotes (" " ' ' etc.)
+
+    Returns:
+        Dictionary with configuration values, or empty dict if no config file found
+
+    Raises:
+        RuntimeError: If config file cannot be read or parsed, or doesn't contain a JSON object
+    """
     config_path = resolve_config_path()
     if not config_path:
         return {}
@@ -67,6 +99,19 @@ def get_setting(
     config_key: str,
     default: Optional[str] = None,
 ) -> Optional[str]:
+    """Get a configuration setting from environment or config file.
+
+    Environment variables take precedence over config file values.
+
+    Args:
+        config: Configuration dictionary from load_config()
+        env_key: Environment variable name to check
+        config_key: Key to look up in config dictionary
+        default: Default value if setting not found
+
+    Returns:
+        Setting value (stripped of whitespace), or default if not found
+    """
     env_value = os.getenv(env_key)
     if env_value is not None:
         env_value = env_value.strip()
