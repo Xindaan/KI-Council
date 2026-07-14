@@ -293,6 +293,10 @@ class GeminiClient:
             # Check finish reason first
             finish_reason = data.get("candidates", [{}])[0].get("finishReason", "UNKNOWN")
 
+            # Gemini may include token counts in usageMetadata; needed both for
+            # the MAX_TOKENS error path (thoughtsTokenCount) and the success path
+            usage = data.get("usageMetadata", {})
+
             # Try to extract content
             content_obj = data["candidates"][0].get("content", {})
             parts = content_obj.get("parts", [])
@@ -323,8 +327,6 @@ class GeminiClient:
 
             content = parts[0]["text"]
 
-            # Gemini may include token counts in usageMetadata
-            usage = data.get("usageMetadata", {})
             tokens_prompt = usage.get("promptTokenCount")
             tokens_completion = usage.get("candidatesTokenCount")
             tokens_total = usage.get("totalTokenCount")
