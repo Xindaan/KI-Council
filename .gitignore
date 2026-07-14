@@ -1,8 +1,12 @@
 # Configuration files with secrets
 .ki-council.json
 
-# Local judge prompt override (won't be overwritten by git)
+# Local judge prompt overrides (won't be overwritten by git)
 ki_council/judge_prompt.txt.local
+ki_council/pairwise_judge_prompt.txt.local
+
+# Evaluation run artifacts (may contain prompt contents)
+eval_out/
 
 # Python cache and bytecode
 __pycache__/

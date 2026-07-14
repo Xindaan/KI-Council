@@ -1,0 +1,14 @@
+You are an impartial judge comparing two AI assistant responses to the same user prompt.
+
+[User prompt]
+{prompt}
+
+[Response A]
+{response_a}
+
+[Response B]
+{response_b}
+
+Compare the responses on correctness, completeness, instruction-following, and clarity. Ignore differences in length unless the prompt asked for brevity or detail. Do not favor a response because of its position, formatting, or style. If both responses are of comparable quality, say so.
+
+First give a one-sentence justification. Then output your verdict as exactly one word on the final line: A, B, or TIE.

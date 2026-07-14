@@ -107,6 +107,54 @@ python -m ki_council.cli "Dein Prompt hier" --debug
 python -m ki_council.cli "Dein Prompt hier" --providers openai,gemini --verbose --max-tokens 2000
 ```
 
+### Downgrade-Advisor: Welches (günstigste) Modell reicht für deine Prompts?
+
+Der Eval-Modus schickt einen Satz **deiner echten Prompts** an mehrere Kandidaten-Modelle, vergleicht jeden Kandidaten blind gegen ein Baseline-Modell (anonymisiert, mit Positions-Tausch gegen Judge-Bias, optional mit einer Jury aus mehreren Judges) und empfiehlt das günstigste Modell, das in mindestens 90% der Fälle gewinnt oder gleichzieht — inklusive Ersparnis-Schätzung.
+
+```bash
+# Prompts aus einer JSONL-Datei (eine Zeile = {"prompt": "..."})
+python -m ki_council.evaluate prompts.jsonl
+
+# Direkt aus deinem ChatGPT- oder Claude-Datenexport (conversations.json):
+# nimmt die erste User-Nachricht der letzten 25 Unterhaltungen
+python -m ki_council.evaluate ~/Downloads/conversations.json --limit 25
+
+# Erst den Plan ansehen (keine API-Calls, keine Kosten)
+python -m ki_council.evaluate prompts.jsonl --dry-run
+
+# Baseline und Schwelle anpassen
+python -m ki_council.evaluate prompts/ --baseline gpt-4o --threshold 0.85
+```
+
+Weitere Prompt-Quellen: Ordner mit `.txt`/`.md`-Dateien (eine Datei = ein Prompt) oder `.txt`-Datei (eine Zeile = ein Prompt).
+
+Kandidaten und Jury konfigurierst du in `.ki-council.json` (ohne `eval_candidates` werden die drei Council-Provider verwendet):
+
+```json
+{
+  "eval_candidates": [
+    {"name": "big", "provider": "openai", "model": "gpt-4o"},
+    {"name": "mini", "provider": "openai", "model": "gpt-4o-mini"},
+    {"name": "haiku", "provider": "anthropic", "model": "claude-3-5-haiku-20241022"},
+    {"name": "local", "provider": "openai", "model": "llama3.1:8b", "base_url": "http://localhost:11434/v1"}
+  ],
+  "eval_baseline": "big",
+  "eval_judges": [
+    {"provider": "openai", "model": "gpt-4o-mini"},
+    {"provider": "anthropic", "model": "claude-3-5-haiku-20241022"}
+  ],
+  "model_prices": {"mein-firmen-modell": [0.5, 1.5]}
+}
+```
+
+Hinweise:
+
+- **Ollama/lokale Modelle:** `provider: "openai"` mit `base_url: "http://localhost:11434/v1"` — lokale Endpoints werden automatisch mit 0 € gerechnet. Ein Kandidat mit eigenem `base_url` erhält bewusst **nicht** automatisch deinen Provider-Key (kein Key-Leak an fremde URLs); bei Bedarf `api_key` explizit setzen.
+- **Preise:** eingebaute Tabelle (Stand 2026-07), überschreibbar via `model_prices` (USD pro 1 Mio. Tokens, `[input, output]`).
+- **Kostenkontrolle:** `--limit` (Default 25) begrenzt die Promptzahl; `--dry-run` zeigt vorab die Anzahl der API-Calls.
+- **Ergebnisse:** `eval_out/<timestamp>/` mit `report.md` (Empfehlung + Tabelle), `summary.json`, `responses.jsonl`, `judgments.jsonl`.
+- **Judge-Prompt anpassen:** `ki_council/pairwise_judge_prompt.txt` nach `pairwise_judge_prompt.txt.local` kopieren (wird von Git ignoriert).
+
 ## Neue Features
 
 ### Robuste Fehlerbehandlung
