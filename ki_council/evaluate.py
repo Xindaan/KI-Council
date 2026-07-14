@@ -20,7 +20,9 @@ import json
 import math
 import logging
 import re
+import statistics
 import sys
+import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -181,7 +183,30 @@ class CandidateStats:
     tokens_prompt: int = 0
     tokens_completion: int = 0
     responses_ok: int = 0
+    latencies: List[float] = field(default_factory=list)
     segments: Dict[str, SegmentStats] = field(default_factory=dict)
+
+    @property
+    def avg_tokens_per_prompt(self) -> Optional[float]:
+        """What one prompt costs in quota rather than in money.
+
+        On a subscription the bill does not move, but the rate limit does: the
+        binding constraint is tokens burned, not dollars spent.
+        """
+        if not self.responses_ok:
+            return None
+        return (self.tokens_prompt + self.tokens_completion) / self.responses_ok
+
+    @property
+    def median_latency(self) -> Optional[float]:
+        """Median seconds per response -- the third currency: waiting.
+
+        Median, not mean: one stalled connection would otherwise decide which
+        model looks fast.
+        """
+        if not self.latencies:
+            return None
+        return statistics.median(self.latencies)
 
     def weakest_segment(self, threshold: float) -> Optional[SegmentStats]:
         """The worst kind of prompt for this candidate, if the data supports one.
@@ -235,6 +260,28 @@ class CandidateStats:
         return cost / self.responses_ok
 
 
+# What "cheaper" means. The question is always "what is the smallest model that
+# is good enough" -- but the currency depends on what is actually scarce: money
+# on an API bill, quota against a rate limit, or your own waiting time. On a
+# flat-rate subscription, saving dollars is worth nothing and saving quota or
+# seconds is worth everything, so the verdict must not hardcode money.
+OPTIMIZE_COST = "cost"
+OPTIMIZE_TOKENS = "tokens"
+OPTIMIZE_LATENCY = "latency"
+
+_METRICS = {
+    OPTIMIZE_COST: ("avg_cost_per_prompt", "USD per prompt"),
+    OPTIMIZE_TOKENS: ("avg_tokens_per_prompt", "tokens per prompt (quota burn)"),
+    OPTIMIZE_LATENCY: ("median_latency", "seconds per response"),
+}
+
+
+def metric_value(entry: "CandidateStats", optimize: str) -> Optional[float]:
+    """The candidate's score in the currency being optimized."""
+    attribute, _ = _METRICS[optimize]
+    return getattr(entry, attribute)
+
+
 @dataclass
 class EvalResult:
     """Everything the report and summary.json are rendered from."""
@@ -246,6 +293,7 @@ class EvalResult:
     judges: List[Candidate]
     threshold: float
     parse_failures: int = 0
+    optimize: str = "cost"  # the currency the verdict minimizes
     recommendation: Optional[CandidateStats] = None
 
 
@@ -526,6 +574,7 @@ def run_eval(
     generate_fn: Callable[[Candidate, str, int], LLMResponse] = _default_generate,
     judge_fn: Callable[[Candidate, str], str] = _default_judge,
     segment_of: Optional[Dict[str, str]] = None,
+    optimize: str = OPTIMIZE_COST,
 ) -> EvalResult:
     """Run the full evaluation: generate, judge pairwise, aggregate.
 
@@ -543,16 +592,22 @@ def run_eval(
 
     # Phase 1: generate all responses in parallel.
     logger.info(f"Phase 1: generating {len(prompts)} prompt(s) x {len(candidates)} candidate(s)")
+
+    def timed_generate(candidate: Candidate, text: str) -> Tuple[LLMResponse, float]:
+        started = time.perf_counter()
+        response = generate_fn(candidate, text, max_tokens)
+        return (response, time.perf_counter() - started)
+
     responses: Dict[Tuple[str, str], LLMResponse] = {}
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(generate_fn, candidate, item.text, max_tokens): (item, candidate)
+            executor.submit(timed_generate, candidate, item.text): (item, candidate)
             for item in prompts
             for candidate in candidates
         }
         for future in as_completed(futures):
             item, candidate = futures[future]
-            response = future.result()
+            response, seconds = future.result()
             responses[(item.id, candidate.name)] = response
             entry = stats[candidate.name]
             if response.error:
@@ -561,6 +616,7 @@ def run_eval(
                 entry.responses_ok += 1
                 entry.tokens_prompt += response.tokens_prompt or 0
                 entry.tokens_completion += response.tokens_completion or 0
+                entry.latencies.append(seconds)
             if responses_log:
                 _append_jsonl(responses_log, {
                     "prompt_id": item.id,
@@ -570,6 +626,7 @@ def run_eval(
                     "error": response.error,
                     "tokens_prompt": response.tokens_prompt,
                     "tokens_completion": response.tokens_completion,
+                    "seconds": round(seconds, 3),
                 })
 
     # Phase 2: blind pairwise judging, both orientations, full jury.
@@ -670,33 +727,44 @@ def run_eval(
     baseline_stats = stats.pop(baseline.name)
     result = EvalResult(
         baseline=baseline_stats,
-        candidates=sorted(stats.values(), key=lambda s: (s.avg_cost_per_prompt is None, s.avg_cost_per_prompt or 0)),
+        candidates=sorted(
+            stats.values(),
+            key=lambda s: (metric_value(s, optimize) is None, metric_value(s, optimize) or 0),
+        ),
         prompts_total=len(prompts),
         prompts_judged=len(prompts) - prompts_skipped,
         prompts_skipped=prompts_skipped,
         judges=judges,
         threshold=threshold,
         parse_failures=parse_failures,
+        optimize=optimize,
     )
-    result.recommendation = pick_recommendation(result)
+    result.recommendation = pick_recommendation(result, optimize)
     return result
 
 
-def pick_recommendation(result: EvalResult) -> Optional[CandidateStats]:
-    """Cheapest candidate that clears the threshold and undercuts the baseline."""
-    baseline_cost = result.baseline.avg_cost_per_prompt
+def pick_recommendation(
+    result: EvalResult, optimize: str = OPTIMIZE_COST
+) -> Optional[CandidateStats]:
+    """Cheapest good-enough candidate, where "cheapest" is measured in `optimize`.
+
+    A model only qualifies if it beats the baseline on the chosen currency: on a
+    flat-rate subscription a model that saves dollars is worth nothing, while one
+    that halves the wait or the quota burn is worth a lot.
+    """
+    baseline_value = metric_value(result.baseline, optimize)
     qualifying = []
     for entry in result.candidates:
         rate = entry.win_or_tie_rate
-        cost = entry.avg_cost_per_prompt
-        if rate is None or rate < result.threshold or cost is None:
+        value = metric_value(entry, optimize)
+        if rate is None or rate < result.threshold or value is None:
             continue
-        if baseline_cost is not None and cost >= baseline_cost:
+        if baseline_value is not None and value >= baseline_value:
             continue
         qualifying.append(entry)
     if not qualifying:
         return None
-    return min(qualifying, key=lambda entry: entry.avg_cost_per_prompt)
+    return min(qualifying, key=lambda entry: metric_value(entry, optimize))
 
 
 def is_conclusive(entry: CandidateStats, threshold: float) -> bool:
@@ -736,6 +804,18 @@ _PRICE_SOURCE_LABEL = {
 }
 
 
+def _fmt_tokens(tokens_per_prompt: Optional[float]) -> str:
+    if tokens_per_prompt is None:
+        return "unknown"
+    return f"{tokens_per_prompt:,.0f}"
+
+
+def _fmt_seconds(seconds: Optional[float]) -> str:
+    if seconds is None:
+        return "unknown"
+    return f"{seconds:.1f}s"
+
+
 def _fmt_price(candidate: Candidate) -> str:
     """Render a candidate's price with its source, e.g. "$5.00/$25.00 (live)"."""
     if candidate.price is None:
@@ -766,14 +846,16 @@ def render_report(result: EvalResult, generated_at: Optional[str] = None) -> str
     baseline_cost = baseline.avg_cost_per_prompt
     recommendation = result.recommendation
     if recommendation:
-        cost = recommendation.avg_cost_per_prompt
+        _, metric_label = _METRICS[result.optimize]
+        value = metric_value(recommendation, result.optimize)
+        baseline_value = metric_value(baseline, result.optimize)
         savings = ""
-        if baseline_cost and cost is not None and baseline_cost > 0:
-            savings = f", saving **{(1 - cost / baseline_cost) * 100:.0f}%**"
+        if baseline_value and value is not None and baseline_value > 0:
+            savings = f" -- **{(1 - value / baseline_value) * 100:.0f}% less**"
         lines.append(
             f"**Switch to {recommendation.candidate.name}** ({recommendation.candidate.model}): "
-            f"it wins or ties in {_fmt_rate(recommendation.win_or_tie_rate)} of your prompts at "
-            f"{_fmt_cost(cost)} per 1000 prompts vs {_fmt_cost(baseline_cost)} for the baseline{savings}."
+            f"it wins or ties in {_fmt_rate(recommendation.win_or_tie_rate)} of your prompts, "
+            f"and it spends less of what is scarce here ({metric_label}){savings}."
         )
         interval = recommendation.win_or_tie_ci
         if is_conclusive(recommendation, result.threshold):
@@ -819,10 +901,14 @@ def render_report(result: EvalResult, generated_at: Optional[str] = None) -> str
         "",
         "## Results",
         "",
-        "| Candidate | Model | Win | Tie | Loss | Win+Tie (95% CI) | Cost / 1k prompts | Errors | Unusable |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "All three currencies are shown, not just the one being optimized: a model that saves "
+        "money but doubles the wait is a bad trade you should get to see.",
+        "",
+        "| Candidate | Model | Win | Tie | Loss | Win+Tie (95% CI) | Cost / 1k prompts | Tokens / prompt | Median latency | Errors | Unusable |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
         f"| {baseline.candidate.name} (baseline) | {baseline.candidate.model} | - | - | - | - | "
-        f"{_fmt_cost(baseline_cost)} | {baseline.errors} | - |",
+        f"{_fmt_cost(baseline_cost)} | {_fmt_tokens(baseline.avg_tokens_per_prompt)} | "
+        f"{_fmt_seconds(baseline.median_latency)} | {baseline.errors} | - |",
     ]
     for entry in result.candidates:
         marker = " **<- verdict**" if entry is recommendation else ""
@@ -833,7 +919,8 @@ def render_report(result: EvalResult, generated_at: Optional[str] = None) -> str
         lines.append(
             f"| {entry.candidate.name}{marker} | {entry.candidate.model} | {entry.wins} | {entry.ties} | "
             f"{entry.losses} | {rate} | "
-            f"{_fmt_cost(entry.avg_cost_per_prompt)} | {entry.errors} | {entry.unknown} |"
+            f"{_fmt_cost(entry.avg_cost_per_prompt)} | {_fmt_tokens(entry.avg_tokens_per_prompt)} | "
+            f"{_fmt_seconds(entry.median_latency)} | {entry.errors} | {entry.unknown} |"
         )
     segment_labels = sorted({
         label for entry in result.candidates for label in entry.segments
@@ -1013,6 +1100,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", help="Output directory (default: eval_out/<timestamp>).")
     parser.add_argument("--config", help="Path to a .ki-council.json file to use for this run.")
     parser.add_argument("--dry-run", action="store_true", help="Show the run plan (prompts, candidates, call count) without calling any API.")
+    parser.add_argument("--optimize", choices=(OPTIMIZE_COST, OPTIMIZE_TOKENS, OPTIMIZE_LATENCY), default=OPTIMIZE_COST, help="What is scarce for you: money (cost), rate-limit quota (tokens), or waiting time (latency). Default: cost.")
     parser.add_argument("--no-classify", action="store_true", help="Skip prompt classification; report one overall rate instead of a breakdown by kind of prompt.")
     parser.add_argument("--segment-by", choices=("category", "difficulty"), default="category", help="Group the breakdown by kind of task or by difficulty (default: category).")
     parser.add_argument("--no-live-prices", action="store_true", help="Do not fetch current prices; use the config and the bundled table only.")
@@ -1112,6 +1200,7 @@ def main() -> int:
             prompts, candidates, judges, baseline,
             max_tokens=args.max_tokens, threshold=args.threshold,
             workers=args.workers, out_dir=out_dir, segment_of=segment_of,
+            optimize=args.optimize,
         )
     except KeyboardInterrupt:
         print("\nAborted by user.", file=sys.stderr)

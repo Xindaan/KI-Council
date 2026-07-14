@@ -1,5 +1,6 @@
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -7,6 +8,7 @@ from unittest import mock
 from ki_council.clients import LLMResponse
 from ki_council.evaluate import (
     Candidate,
+    CandidateStats,
     EvalConfigError,
     build_candidates,
     build_pairwise_prompt,
@@ -380,6 +382,41 @@ class RunEvalTests(unittest.TestCase):
         self.assertEqual(weakest.label, "hard")
         self.assertEqual(weakest.win_or_tie_rate, 0.0)
         self.assertIn("hard", render_report(result))
+
+    def test_optimizing_for_latency_ignores_the_bill(self):
+        # The subscription case: the bill does not move, the waiting does. A
+        # model that is cheaper in dollars but slower must not win here.
+        def slow_for_cheap(candidate, prompt, max_tokens):
+            response = _make_generate(self.answers)(candidate, prompt, max_tokens)
+            if candidate.name == "cheap":
+                time.sleep(0.02)  # cheap in dollars, slow in seconds
+            return response
+
+        result = run_eval(
+            self.prompts, self.candidates, self.judges, self.baseline, threshold=0.9,
+            generate_fn=slow_for_cheap, judge_fn=_make_quality_judge(self.quality),
+            optimize="latency", workers=1,
+        )
+        cheap = next(e for e in result.candidates if e.candidate.name == "cheap")
+        self.assertGreater(cheap.median_latency, result.baseline.median_latency)
+        # It qualifies on quality and it is cheaper in USD, but it loses time.
+        self.assertIsNone(result.recommendation)
+
+    def test_optimizing_for_tokens_uses_quota_not_money(self):
+        result = run_eval(
+            self.prompts, self.candidates, self.judges, self.baseline, threshold=0.9,
+            generate_fn=_make_generate(self.answers),
+            judge_fn=_make_quality_judge(self.quality),
+            optimize="tokens",
+        )
+        cheap = next(e for e in result.candidates if e.candidate.name == "cheap")
+        self.assertEqual(cheap.avg_tokens_per_prompt, 300)  # 100 prompt + 200 completion
+        # Same token usage as the baseline -> nothing to gain on quota.
+        self.assertIsNone(result.recommendation)
+
+    def test_median_latency_shrugs_off_a_single_stall(self):
+        entry = CandidateStats(candidate=self.cheap, latencies=[0.1, 0.1, 0.1, 30.0])
+        self.assertEqual(entry.median_latency, 0.1)
 
     def test_cost_math(self):
         result = self._run()

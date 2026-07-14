@@ -169,6 +169,23 @@ Hinweise:
 - **Wie belastbar ist das Verdikt?** Der Report weist ein 95-%-Konfidenzintervall aus und markiert die Empfehlung als **vorläufig**, wenn die Stichprobe sie nicht trägt (bei Schwelle 0,9 braucht es selbst bei fehlerfreiem Lauf ~35 Prompts). Der Abschnitt **Judge health** zeigt, wie viel des Verdikts auf Unentschieden statt auf Siegen beruht — ein Judge, der die Antworten nicht auseinanderhalten kann, verschenkt sonst Downgrade-Empfehlungen.
 - **Judge-Prompt anpassen:** `ki_council/pairwise_judge_prompt.txt` nach `pairwise_judge_prompt.txt.local` kopieren (wird von Git ignoriert).
 
+#### Was ist bei dir knapp? (`--optimize`)
+
+Die Frage lautet immer „was ist das kleinste Modell, das für diese Arbeit
+reicht?" — aber *klein* heißt je nach Situation etwas anderes:
+
+| `--optimize` | Wenn deine knappe Ressource ist … | Typischer Fall |
+|---|---|---|
+| `cost` (Default) | **Geld** — du zahlst pro Token | Ein Feature läuft über die API in Produktion |
+| `tokens` | **Kontingent** — du rennst ins Rate Limit | Coding im Abo; das große Modell frisst dein Fenster |
+| `latency` | **Zeit** — du wartest zu lange | Interaktives Arbeiten, kurze Prompts |
+
+Der Report zeigt **immer alle drei** Spalten, egal worauf du optimierst — ein
+Modell, das Geld spart und dafür die Wartezeit verdoppelt, ist ein schlechter
+Tausch, und den sollst du sehen. Nur das *Verdikt* richtet sich nach der von dir
+gewählten Währung: Bei `--optimize latency` gewinnt ein Modell nicht, bloß weil
+es billiger ist.
+
 #### Woher die Preise kommen
 
 Das Verdikt ist nur so gut wie die Preise, mit denen es rechnet — ein falscher
