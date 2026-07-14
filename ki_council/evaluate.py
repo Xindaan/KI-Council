@@ -21,6 +21,7 @@ import math
 import logging
 import re
 import sys
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -35,6 +36,7 @@ from ki_council.clients import (
     OpenAIClient,
 )
 from ki_council.config import CONFIG_ENV_VAR, get_setting, load_config
+from ki_council.classify import CLASSIFY_MAX_TOKENS, classify_prompts, segment_labels
 from ki_council.pricing import (
     LIVE_PRICES_URL,
     SOURCE_CONFIG,
@@ -102,17 +104,67 @@ def wilson_interval(successes: int, total: int, z: float = Z_95) -> Tuple[float,
     return (max(0.0, low), min(1.0, high))
 
 
-def prompts_needed_for(threshold: float, z: float = Z_95) -> int:
-    """Smallest sample where a flawless run (100% win-or-tie) would be conclusive.
+SAMPLE_SIZE_CAP = 100_000
 
-    Answers the question the report has to answer honestly when the evidence is
-    thin: "how many prompts would I need for this verdict to hold up?" With
-    successes == total the Wilson lower bound is total / (total + z^2), so the
-    bound clears the threshold once total >= z^2 * threshold / (1 - threshold).
+
+def prompts_needed_for(
+    threshold: float, rate: float = 1.0, z: float = Z_95
+) -> Optional[int]:
+    """How many judged prompts it would take for `rate` to clear `threshold`.
+
+    Answers the question the report owes the reader when the evidence is thin:
+    "how many prompts would settle this?" The answer depends on the rate you
+    actually observed, not on a hypothetical perfect run -- at 92% against a 90%
+    bar the sample has to grow far beyond what a flawless run would need,
+    because the margin being defended is thin.
+
+    Returns None when no sample would do it: a rate at or below the threshold
+    can never have a lower bound above it, no matter how much data is added.
     """
-    if threshold >= 1.0:
-        return 0  # unreachable: no finite sample proves a 100% threshold
-    return math.ceil(z**2 * threshold / (1 - threshold))
+    if rate <= threshold:
+        return None
+    low, high = 1, SAMPLE_SIZE_CAP
+    if wilson_interval(round(rate * high), high, z)[0] < threshold:
+        return None
+    while low < high:
+        mid = (low + high) // 2
+        if wilson_interval(round(rate * mid), mid, z)[0] >= threshold:
+            high = mid
+        else:
+            low = mid + 1
+    return low
+
+
+# Below this many judged pairs a segment says nothing: with 4 prompts even a
+# flawless run has a Wilson lower bound around 0.5. Such a segment is reported
+# as "too few prompts" rather than as a rate that invites over-reading.
+MIN_SEGMENT_SAMPLE = 8
+
+
+@dataclass
+class SegmentStats:
+    """One candidate's record within one kind of prompt (e.g. "coding")."""
+    label: str
+    wins: int = 0
+    ties: int = 0
+    losses: int = 0
+    judged: int = 0
+
+    @property
+    def win_or_tie_rate(self) -> Optional[float]:
+        if not self.judged:
+            return None
+        return (self.wins + self.ties) / self.judged
+
+    @property
+    def win_or_tie_ci(self) -> Optional[Tuple[float, float]]:
+        if not self.judged:
+            return None
+        return wilson_interval(self.wins + self.ties, self.judged)
+
+    @property
+    def has_enough_data(self) -> bool:
+        return self.judged >= MIN_SEGMENT_SAMPLE
 
 
 @dataclass
@@ -129,6 +181,24 @@ class CandidateStats:
     tokens_prompt: int = 0
     tokens_completion: int = 0
     responses_ok: int = 0
+    segments: Dict[str, SegmentStats] = field(default_factory=dict)
+
+    def weakest_segment(self, threshold: float) -> Optional[SegmentStats]:
+        """The worst kind of prompt for this candidate, if the data supports one.
+
+        This is the number the headline rate hides: strong everyday performance
+        can carry a candidate over the bar while it fails the work the expensive
+        model was kept for.
+        """
+        failing = [
+            segment for segment in self.segments.values()
+            if segment.has_enough_data
+            and segment.win_or_tie_rate is not None
+            and segment.win_or_tie_rate < threshold
+        ]
+        if not failing:
+            return None
+        return min(failing, key=lambda segment: segment.win_or_tie_rate)
 
     @property
     def win_or_tie_rate(self) -> Optional[float]:
@@ -455,8 +525,15 @@ def run_eval(
     out_dir: Optional[Path] = None,
     generate_fn: Callable[[Candidate, str, int], LLMResponse] = _default_generate,
     judge_fn: Callable[[Candidate, str], str] = _default_judge,
+    segment_of: Optional[Dict[str, str]] = None,
 ) -> EvalResult:
-    """Run the full evaluation: generate, judge pairwise, aggregate."""
+    """Run the full evaluation: generate, judge pairwise, aggregate.
+
+    `segment_of` maps a prompt id to the kind of prompt it is (see classify.py).
+    Given it, the result carries a per-segment breakdown alongside the overall
+    rate, which is what keeps a good average from hiding a bad segment.
+    """
+    segment_of = segment_of or {}
     responses_log = out_dir / "responses.jsonl" if out_dir else None
     judgments_log = out_dir / "judgments.jsonl" if out_dir else None
     if out_dir:
@@ -560,18 +637,31 @@ def run_eval(
             record = future.result()
             entry = stats[record["candidate"]]
             vote = record["vote"]
+            label = segment_of.get(record["prompt_id"])
+            if label:
+                record["segment"] = label
             if vote == "unknown":
                 # No usable verdict: drop the pair instead of scoring it as a
                 # tie, which the threshold would read as "good enough".
                 entry.unknown += 1
             else:
                 entry.judged += 1
+                segment = None
+                if label:
+                    segment = entry.segments.setdefault(label, SegmentStats(label=label))
+                    segment.judged += 1
                 if vote == "win":
                     entry.wins += 1
+                    if segment:
+                        segment.wins += 1
                 elif vote == "loss":
                     entry.losses += 1
+                    if segment:
+                        segment.losses += 1
                 else:
                     entry.ties += 1
+                    if segment:
+                        segment.ties += 1
             if record.get("inconsistent"):
                 entry.inconsistent += 1
             if judgments_log:
@@ -693,14 +783,23 @@ def render_report(result: EvalResult, generated_at: Optional[str] = None) -> str
                 f"interval ({_fmt_rate(interval[0])}) clears the {result.threshold * 100:.0f}% bar.",
             ]
         else:
-            needed = prompts_needed_for(result.threshold)
+            needed = prompts_needed_for(result.threshold, recommendation.win_or_tie_rate)
+            if needed and needed > recommendation.judged:
+                remedy = (
+                    f"At the rate observed here it would take about {needed} judged prompts to "
+                    f"settle it; re-run with `--limit {needed}`."
+                )
+            else:
+                remedy = (
+                    "Its margin over the bar is too thin for any realistic sample to settle; treat "
+                    "the two models as tied on this prompt set."
+                )
             lines += [
                 "",
                 f"**Treat this as provisional.** With {recommendation.judged} judged prompt(s) the "
                 f"true rate could be as low as {_fmt_rate(interval[0])} (95% interval: "
                 f"{_fmt_rate(interval[0])}-{_fmt_rate(interval[1])}), which is below the "
-                f"{result.threshold * 100:.0f}% bar. A flawless run needs at least ~{needed} prompts "
-                f"to settle this; re-run with `--limit {max(needed, 50)}`.",
+                f"{result.threshold * 100:.0f}% bar. {remedy}",
             ]
         tie_share = recommendation.tie_share
         if tie_share is not None and tie_share > 0.5:
@@ -736,6 +835,53 @@ def render_report(result: EvalResult, generated_at: Optional[str] = None) -> str
             f"{entry.losses} | {rate} | "
             f"{_fmt_cost(entry.avg_cost_per_prompt)} | {entry.errors} | {entry.unknown} |"
         )
+    segment_labels = sorted({
+        label for entry in result.candidates for label in entry.segments
+    })
+    if segment_labels:
+        lines += [
+            "",
+            "## By kind of prompt",
+            "",
+            "The headline rate is an average over everything you asked. This is where it "
+            "breaks down -- a model can ace your everyday prompts and still fail the work you "
+            "kept the expensive model for.",
+            "",
+            "| Kind | " + " | ".join(entry.candidate.name for entry in result.candidates) + " |",
+            "|---" * (len(result.candidates) + 1) + "|",
+        ]
+        for label in segment_labels:
+            cells = []
+            for entry in result.candidates:
+                segment = entry.segments.get(label)
+                if segment is None or not segment.judged:
+                    cells.append("-")
+                elif not segment.has_enough_data:
+                    cells.append(f"({_fmt_rate(segment.win_or_tie_rate)}, n={segment.judged})")
+                else:
+                    interval = segment.win_or_tie_ci
+                    cells.append(
+                        f"{_fmt_rate(segment.win_or_tie_rate)} "
+                        f"({_fmt_rate(interval[0])}-{_fmt_rate(interval[1])}, n={segment.judged})"
+                    )
+            lines.append(f"| {label} | " + " | ".join(cells) + " |")
+        lines += [
+            "",
+            f"Rates in brackets without an interval come from fewer than {MIN_SEGMENT_SAMPLE} "
+            "prompts and are not evidence of anything -- feed the run more prompts of that kind "
+            "before reading them.",
+        ]
+        if recommendation:
+            weakest = recommendation.weakest_segment(result.threshold)
+            if weakest:
+                lines += [
+                    "",
+                    f"**{recommendation.candidate.name} falls below the bar on '{weakest.label}' "
+                    f"prompts ({_fmt_rate(weakest.win_or_tie_rate)} over {weakest.judged} of them), "
+                    f"even though it clears it overall.** If that kind of work matters to you, the "
+                    f"headline verdict is not the one to act on.",
+                ]
+
     judged_total = sum(entry.judged for entry in result.candidates)
     ties_total = sum(entry.ties for entry in result.candidates)
     inconsistent_total = sum(entry.inconsistent for entry in result.candidates)
@@ -825,6 +971,16 @@ def result_summary(result: EvalResult) -> Dict[str, Any]:
             "conclusive": is_conclusive(entry, result.threshold),
             "avg_cost_per_prompt_usd": entry.avg_cost_per_prompt,
             "price_source": entry.candidate.price_source,
+            "segments": {
+                label: {
+                    "wins": segment.wins, "ties": segment.ties, "losses": segment.losses,
+                    "judged": segment.judged,
+                    "win_or_tie_rate": segment.win_or_tie_rate,
+                    "win_or_tie_ci95": segment.win_or_tie_ci,
+                    "enough_data": segment.has_enough_data,
+                }
+                for label, segment in sorted(entry.segments.items())
+            },
         }
 
     return {
@@ -857,6 +1013,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", help="Output directory (default: eval_out/<timestamp>).")
     parser.add_argument("--config", help="Path to a .ki-council.json file to use for this run.")
     parser.add_argument("--dry-run", action="store_true", help="Show the run plan (prompts, candidates, call count) without calling any API.")
+    parser.add_argument("--no-classify", action="store_true", help="Skip prompt classification; report one overall rate instead of a breakdown by kind of prompt.")
+    parser.add_argument("--segment-by", choices=("category", "difficulty"), default="category", help="Group the breakdown by kind of task or by difficulty (default: category).")
     parser.add_argument("--no-live-prices", action="store_true", help="Do not fetch current prices; use the config and the bundled table only.")
     parser.add_argument("--prices-url", default=LIVE_PRICES_URL, help=f"Where to fetch current model prices (default: {LIVE_PRICES_URL}).")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging output.")
@@ -888,13 +1046,15 @@ def main() -> int:
 
     generation_calls = len(prompts) * len(candidates)
     judge_calls = len(prompts) * (len(candidates) - 1) * len(judges) * 2
+    classify_calls = 0 if args.no_classify else len(prompts)
     plan = [
         f"Prompts:     {len(prompts)} (limit {args.limit})",
         f"Candidates:  " + ", ".join(
             f"{c.name} ({c.model}{'|baseline' if c.name == baseline.name else ''})" for c in candidates
         ),
         f"Jury:        " + ", ".join(judge.model for judge in judges),
-        f"API calls:   {generation_calls} generations + {judge_calls} judge calls",
+        f"API calls:   {generation_calls} generations + {judge_calls} judge calls"
+        + (f" + {classify_calls} classification calls" if classify_calls else ""),
         f"Threshold:   {args.threshold * 100:.0f}% win-or-tie",
         f"Prices:      " + ", ".join(
             f"{c.name}={_fmt_price(c)}" for c in candidates
@@ -920,11 +1080,38 @@ def main() -> int:
 
     out_dir = Path(args.out) if args.out else Path("eval_out") / datetime.now().strftime("%Y%m%d-%H%M%S")
 
+    segment_of: Dict[str, str] = {}
+    if not args.no_classify:
+        # The first judge doubles as the classifier: it is already a model the
+        # user trusts to read their prompts, and it saves a second knob.
+        classifier = judges[0]
+        classifications = classify_prompts(
+            prompts,
+            lambda text: make_client(classifier).generate(
+                text, max_tokens=CLASSIFY_MAX_TOKENS
+            ).content,
+            workers=args.workers,
+        )
+        segment_of = segment_labels(classifications, by=args.segment_by)
+        counts = Counter(segment_of.values())
+        print(
+            "Segments: " + ", ".join(f"{label}={n}" for label, n in sorted(counts.items())),
+            file=sys.stderr,
+        )
+        thin = [label for label, n in counts.items() if n < MIN_SEGMENT_SAMPLE]
+        if thin:
+            print(
+                f"Warning: {', '.join(sorted(thin))} have fewer than {MIN_SEGMENT_SAMPLE} prompts. "
+                f"Those segments will not support a verdict -- raise --limit or feed more prompts "
+                f"of that kind.",
+                file=sys.stderr,
+            )
+
     try:
         result = run_eval(
             prompts, candidates, judges, baseline,
             max_tokens=args.max_tokens, threshold=args.threshold,
-            workers=args.workers, out_dir=out_dir,
+            workers=args.workers, out_dir=out_dir, segment_of=segment_of,
         )
     except KeyboardInterrupt:
         print("\nAborted by user.", file=sys.stderr)

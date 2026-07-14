@@ -102,6 +102,21 @@ class WilsonIntervalTests(unittest.TestCase):
         self.assertGreaterEqual(wilson_interval(needed, needed)[0], 0.9)
         self.assertLess(wilson_interval(needed - 1, needed - 1)[0], 0.9)
 
+    def test_required_sample_size_depends_on_the_observed_rate(self):
+        # A thin margin needs far more data than a flawless run: quoting the
+        # flawless-run number to someone sitting at 92% would send them off to
+        # collect 35 prompts for a question that needs hundreds.
+        flawless = prompts_needed_for(0.9, 1.0)
+        thin_margin = prompts_needed_for(0.9, 0.92)
+        self.assertGreater(thin_margin, flawless * 5)
+        self.assertGreaterEqual(
+            wilson_interval(round(0.92 * thin_margin), thin_margin)[0], 0.9
+        )
+
+    def test_a_rate_below_the_bar_can_never_be_rescued_by_more_data(self):
+        self.assertIsNone(prompts_needed_for(0.9, 0.9))
+        self.assertIsNone(prompts_needed_for(0.9, 0.8))
+
 
 @mock.patch.dict("os.environ", {}, clear=True)
 class CandidateConfigTests(unittest.TestCase):
@@ -309,6 +324,62 @@ class RunEvalTests(unittest.TestCase):
         result = self._run()
         cheap = next(e for e in result.candidates if e.candidate.name == "cheap")
         self.assertEqual(cheap.tie_share, 1.0)  # every pass came from a tie
+
+    def test_good_average_does_not_hide_a_bad_segment(self):
+        # The reason segments exist. The candidate ties on every easy prompt and
+        # loses every hard one. Overall it clears the bar; on the work that made
+        # the expensive model worth keeping, it does not.
+        prompts = (
+            [PromptItem(id=f"easy{i}", text=f"Easy question {i}?", source="t") for i in range(9)]
+            + [PromptItem(id=f"hard{i}", text=f"Hard question {i}?", source="t") for i in range(1)]
+        )
+        segment_of = {p.id: ("easy" if p.id.startswith("easy") else "hard") for p in prompts}
+
+        def judge(judge_candidate, judge_prompt):
+            # The candidate's answer loses only on the hard prompts.
+            if "Hard question" in judge_prompt:
+                section_a = judge_prompt.split("[Response A]")[1].split("[Response B]")[0]
+                return "Baseline is better.\n" + ("A" if "BASELINE" in section_a else "B")
+            return "Comparable.\nTIE"
+
+        result = run_eval(
+            prompts, self.candidates, self.judges, self.baseline, threshold=0.9,
+            generate_fn=_make_generate(self.answers), judge_fn=judge,
+            segment_of=segment_of,
+        )
+        cheap = next(e for e in result.candidates if e.candidate.name == "cheap")
+        self.assertEqual(cheap.win_or_tie_rate, 0.9)  # clears the bar overall
+        self.assertEqual(cheap.segments["easy"].win_or_tie_rate, 1.0)
+        self.assertEqual(cheap.segments["hard"].win_or_tie_rate, 0.0)
+        # The hard segment is too small to be evidence, so it must not be sold
+        # as a finding either -- that is what MIN_SEGMENT_SAMPLE guards.
+        self.assertFalse(cheap.segments["hard"].has_enough_data)
+        self.assertIsNone(cheap.weakest_segment(0.9))
+
+    def test_a_failing_segment_with_enough_data_is_surfaced(self):
+        prompts = (
+            [PromptItem(id=f"easy{i}", text=f"Easy question {i}?", source="t") for i in range(12)]
+            + [PromptItem(id=f"hard{i}", text=f"Hard question {i}?", source="t") for i in range(8)]
+        )
+        segment_of = {p.id: ("easy" if p.id.startswith("easy") else "hard") for p in prompts}
+
+        def judge(judge_candidate, judge_prompt):
+            if "Hard question" in judge_prompt:
+                section_a = judge_prompt.split("[Response A]")[1].split("[Response B]")[0]
+                return "Baseline is better.\n" + ("A" if "BASELINE" in section_a else "B")
+            return "Comparable.\nTIE"
+
+        result = run_eval(
+            prompts, self.candidates, self.judges, self.baseline, threshold=0.9,
+            generate_fn=_make_generate(self.answers), judge_fn=judge,
+            segment_of=segment_of,
+        )
+        cheap = next(e for e in result.candidates if e.candidate.name == "cheap")
+        weakest = cheap.weakest_segment(0.9)
+        self.assertIsNotNone(weakest)
+        self.assertEqual(weakest.label, "hard")
+        self.assertEqual(weakest.win_or_tie_rate, 0.0)
+        self.assertIn("hard", render_report(result))
 
     def test_cost_math(self):
         result = self._run()
