@@ -11,13 +11,16 @@ from ki_council.evaluate import (
     build_candidates,
     build_pairwise_prompt,
     combine_orientations,
+    is_conclusive,
     load_judges,
     majority_vote,
     parse_verdict,
     pick_baseline,
+    prompts_needed_for,
     render_report,
     result_summary,
     run_eval,
+    wilson_interval,
 )
 from ki_council.promptsets import PromptItem
 
@@ -46,17 +49,58 @@ class VoteLogicTests(unittest.TestCase):
         self.assertEqual(combine_orientations("B", "A"), "win")
         self.assertEqual(combine_orientations("A", "B"), "loss")
 
-    def test_disagreement_or_tie_degrades_to_tie(self):
-        self.assertEqual(combine_orientations("B", "B"), "tie")  # position-biased judge
-        self.assertEqual(combine_orientations("A", "A"), "tie")
-        self.assertEqual(combine_orientations("TIE", "A"), "tie")
-        self.assertEqual(combine_orientations(None, "A"), "tie")
+    def test_real_tie_is_a_tie(self):
+        self.assertEqual(combine_orientations("TIE", "TIE"), "tie")
+
+    def test_self_contradiction_is_kept_apart_from_a_real_tie(self):
+        # The judge picked the same position both times: it is reading position,
+        # not quality. Still scored as a tie, but it must be visible as its own
+        # thing so a position-blind judge cannot masquerade as "they're equal".
+        self.assertEqual(combine_orientations("B", "B"), "inconsistent")
+        self.assertEqual(combine_orientations("A", "A"), "inconsistent")
+        self.assertEqual(combine_orientations("TIE", "A"), "inconsistent")
+
+    def test_unusable_verdict_is_not_a_tie(self):
+        # A tie counts towards the downgrade threshold. A broken judge must not
+        # earn the candidate a pass by failing.
+        self.assertEqual(combine_orientations(None, "A"), "unknown")
+        self.assertEqual(combine_orientations("A", None), "unknown")
+        self.assertEqual(combine_orientations(None, None), "unknown")
 
     def test_majority_vote(self):
         self.assertEqual(majority_vote(["win", "win", "loss"]), "win")
         self.assertEqual(majority_vote(["loss", "loss", "tie"]), "loss")
         self.assertEqual(majority_vote(["win", "loss", "tie"]), "tie")
         self.assertEqual(majority_vote(["win"]), "win")
+
+    def test_unknown_judges_do_not_get_a_say(self):
+        # One judge failed, the other two agree: their verdict stands.
+        self.assertEqual(majority_vote(["win", "win", "unknown"]), "win")
+        # Every judge failed: the pair has no verdict and must drop out.
+        self.assertEqual(majority_vote(["unknown", "unknown"]), "unknown")
+
+
+class WilsonIntervalTests(unittest.TestCase):
+    def test_flawless_small_sample_is_still_uncertain(self):
+        # The whole point: 25/25 looks like certainty but is not. If this bound
+        # ever reads >= 0.9, the report would start calling thin runs conclusive.
+        low, high = wilson_interval(25, 25)
+        self.assertAlmostEqual(low, 0.866, places=2)
+        self.assertEqual(high, 1.0)
+
+    def test_interval_narrows_as_the_sample_grows(self):
+        small = wilson_interval(50, 50)
+        large = wilson_interval(500, 500)
+        self.assertLess(small[0], large[0])
+
+    def test_empty_sample_says_nothing(self):
+        self.assertEqual(wilson_interval(0, 0), (0.0, 1.0))
+
+    def test_required_sample_size_matches_the_bound(self):
+        # The number the report quotes must actually be sufficient.
+        needed = prompts_needed_for(0.9)
+        self.assertGreaterEqual(wilson_interval(needed, needed)[0], 0.9)
+        self.assertLess(wilson_interval(needed - 1, needed - 1)[0], 0.9)
 
 
 @mock.patch.dict("os.environ", {}, clear=True)
@@ -230,6 +274,41 @@ class RunEvalTests(unittest.TestCase):
         self.assertEqual(by_name["bad"].win_or_tie_rate, 0.0)
         # bad is cheaper than cheap but fails the threshold -> cheap wins the verdict
         self.assertEqual(result.recommendation.candidate.name, "cheap")
+
+    def test_broken_judge_does_not_hand_out_a_downgrade(self):
+        # The attack this guards against: a judge whose output never parses used
+        # to degrade to "tie" on every pair, ties count towards the threshold, so
+        # the cheapest model sailed through and got recommended. Now those pairs
+        # leave the sample and no verdict is possible.
+        result = self._run(judge_fn=lambda judge, prompt: "I cannot decide.")
+        by_name = {entry.candidate.name: entry for entry in result.candidates}
+        self.assertEqual(by_name["bad"].judged, 0)
+        self.assertEqual(by_name["bad"].unknown, 4)
+        self.assertIsNone(by_name["bad"].win_or_tie_rate)
+        self.assertIsNone(result.recommendation)
+
+    def test_position_blind_judge_is_reported_as_inconsistent(self):
+        # A judge that always picks whatever sits in slot A contradicts itself
+        # once the responses are swapped. It scores as a tie, but is counted.
+        result = self._run(judge_fn=lambda judge, prompt: "The first one.\nA")
+        by_name = {entry.candidate.name: entry for entry in result.candidates}
+        self.assertEqual(by_name["cheap"].ties, 4)
+        self.assertEqual(by_name["cheap"].inconsistent, 4)
+
+    def test_verdict_on_a_small_sample_is_not_conclusive(self):
+        # 4 prompts, all ties: the observed rate is 100%, but the interval runs
+        # far below the 90% bar. The recommendation stands, flagged as such.
+        result = self._run()
+        cheap = next(e for e in result.candidates if e.candidate.name == "cheap")
+        self.assertEqual(cheap.win_or_tie_rate, 1.0)
+        self.assertFalse(is_conclusive(cheap, result.threshold))
+        self.assertLess(cheap.win_or_tie_ci[0], 0.9)
+        self.assertEqual(result.recommendation.candidate.name, "cheap")
+
+    def test_tie_share_exposes_a_verdict_built_on_ties(self):
+        result = self._run()
+        cheap = next(e for e in result.candidates if e.candidate.name == "cheap")
+        self.assertEqual(cheap.tie_share, 1.0)  # every pass came from a tie
 
     def test_cost_math(self):
         result = self._run()

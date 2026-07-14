@@ -164,6 +164,7 @@ Hinweise:
 - **Jury:** Nimm möglichst einen Judge, der nicht aus derselben Familie wie deine Baseline stammt — Modelle bevorzugen tendenziell die eigenen Antworten.
 - **Kostenkontrolle:** `--limit` (Default 25) begrenzt die Promptzahl; `--dry-run` zeigt vorab die Anzahl der API-Calls und die Preise jedes Kandidaten.
 - **Ergebnisse:** `eval_out/<timestamp>/` mit `report.md` (Empfehlung + Tabelle), `summary.json`, `responses.jsonl`, `judgments.jsonl`.
+- **Wie belastbar ist das Verdikt?** Der Report weist ein 95-%-Konfidenzintervall aus und markiert die Empfehlung als **vorläufig**, wenn die Stichprobe sie nicht trägt (bei Schwelle 0,9 braucht es selbst bei fehlerfreiem Lauf ~35 Prompts). Der Abschnitt **Judge health** zeigt, wie viel des Verdikts auf Unentschieden statt auf Siegen beruht — ein Judge, der die Antworten nicht auseinanderhalten kann, verschenkt sonst Downgrade-Empfehlungen.
 - **Judge-Prompt anpassen:** `ki_council/pairwise_judge_prompt.txt` nach `pairwise_judge_prompt.txt.local` kopieren (wird von Git ignoriert).
 
 #### Woher die Preise kommen

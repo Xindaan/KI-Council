@@ -17,6 +17,7 @@ via "eval_candidates" in .ki-council.json (see README).
 
 import argparse
 import json
+import math
 import logging
 import re
 import sys
@@ -79,6 +80,41 @@ class Candidate:
     price_source: str = SOURCE_UNKNOWN  # config | local | live | table | unknown
 
 
+Z_95 = 1.96
+
+
+def wilson_interval(successes: int, total: int, z: float = Z_95) -> Tuple[float, float]:
+    """95% Wilson score interval for a proportion.
+
+    Wilson rather than the textbook normal approximation: the rates here sit
+    near 1.0 (a candidate that wins or ties almost always), where the normal
+    approximation produces intervals reaching past 100% and understates the
+    uncertainty badly at the small sample sizes this tool runs on.
+    """
+    if total <= 0:
+        return (0.0, 1.0)
+    p = successes / total
+    denominator = 1 + z**2 / total
+    centre = p + z**2 / (2 * total)
+    spread = z * math.sqrt(p * (1 - p) / total + z**2 / (4 * total**2))
+    low = (centre - spread) / denominator
+    high = (centre + spread) / denominator
+    return (max(0.0, low), min(1.0, high))
+
+
+def prompts_needed_for(threshold: float, z: float = Z_95) -> int:
+    """Smallest sample where a flawless run (100% win-or-tie) would be conclusive.
+
+    Answers the question the report has to answer honestly when the evidence is
+    thin: "how many prompts would I need for this verdict to hold up?" With
+    successes == total the Wilson lower bound is total / (total + z^2), so the
+    bound clears the threshold once total >= z^2 * threshold / (1 - threshold).
+    """
+    if threshold >= 1.0:
+        return 0  # unreachable: no finite sample proves a 100% threshold
+    return math.ceil(z**2 * threshold / (1 - threshold))
+
+
 @dataclass
 class CandidateStats:
     """Aggregated evaluation outcome for one candidate."""
@@ -88,6 +124,8 @@ class CandidateStats:
     losses: int = 0
     errors: int = 0
     judged: int = 0
+    inconsistent: int = 0  # judge contradicted itself; scored as a tie
+    unknown: int = 0  # no usable verdict; excluded from `judged`
     tokens_prompt: int = 0
     tokens_completion: int = 0
     responses_ok: int = 0
@@ -97,6 +135,25 @@ class CandidateStats:
         if not self.judged:
             return None
         return (self.wins + self.ties) / self.judged
+
+    @property
+    def tie_share(self) -> Optional[float]:
+        """How much of the win-or-tie rate is carried by ties rather than wins.
+
+        The threshold treats a tie as good enough, so a judge that ties on
+        everything hands out downgrade recommendations for free. This is the
+        number that exposes it.
+        """
+        if not self.judged:
+            return None
+        return self.ties / self.judged
+
+    @property
+    def win_or_tie_ci(self) -> Optional[Tuple[float, float]]:
+        """95% Wilson interval around the win-or-tie rate."""
+        if not self.judged:
+            return None
+        return wilson_interval(self.wins + self.ties, self.judged)
 
     @property
     def avg_cost_per_prompt(self) -> Optional[float]:
@@ -327,25 +384,46 @@ def combine_orientations(verdict_ab: Optional[str], verdict_ba: Optional[str]) -
     """Combine both judging orientations into one debiased vote for the candidate.
 
     Orientation 1 shows the candidate as B, orientation 2 as A. Only a verdict
-    confirmed in both orientations counts; disagreement or unparseable output
-    degrades to a tie.
+    confirmed in both orientations counts as a win or a loss.
+
+    Three outcomes that used to collapse into "tie" are kept apart, because a
+    tie counts towards the downgrade threshold and must be earned:
+
+    - "tie":          the judge said TIE in both orientations. A real verdict.
+    - "inconsistent": the judge contradicted itself, i.e. it picked the same
+                      *position* both times. Scored as a tie (the standard
+                      remedy for position bias), but counted separately: a run
+                      full of these means the judge cannot tell the responses
+                      apart, not that they are equally good.
+    - "unknown":      the judge failed or its output was unparseable. Not a
+                      verdict at all, so it must not be scored as one.
     """
-    candidate_first = verdict_ab == "B" and verdict_ba == "A"
-    baseline_first = verdict_ab == "A" and verdict_ba == "B"
-    if candidate_first:
+    if verdict_ab is None or verdict_ba is None:
+        return "unknown"
+    if verdict_ab == "B" and verdict_ba == "A":
         return "win"
-    if baseline_first:
+    if verdict_ab == "A" and verdict_ba == "B":
         return "loss"
-    return "tie"
+    if verdict_ab == "TIE" and verdict_ba == "TIE":
+        return "tie"
+    return "inconsistent"
 
 
 def majority_vote(votes: List[str]) -> str:
-    """Strict-majority jury decision; anything short of a majority is a tie."""
-    wins = votes.count("win")
-    losses = votes.count("loss")
-    if wins > len(votes) / 2:
+    """Strict-majority jury decision over the judges' votes.
+
+    Judges that returned nothing usable ("unknown") do not get a say; if none
+    of them did, the pair itself is unknown and drops out of the sample rather
+    than silently scoring as a tie.
+    """
+    usable = [vote for vote in votes if vote != "unknown"]
+    if not usable:
+        return "unknown"
+    wins = usable.count("win")
+    losses = usable.count("loss")
+    if wins > len(usable) / 2:
         return "win"
-    if losses > len(votes) / 2:
+    if losses > len(usable) / 2:
         return "loss"
     return "tie"
 
@@ -444,6 +522,7 @@ def run_eval(
             record.update({"vote": "loss", "reason": "candidate_error"})
             return record
         votes = []
+        votes_raw = []
         judge_details = []
         for judge in judges:
             prompt_ab = build_pairwise_prompt(item.text, baseline_response.content, candidate_response.content)
@@ -457,11 +536,19 @@ def run_eval(
             if verdict_ab is None or verdict_ba is None:
                 parse_failures += 1
             vote = combine_orientations(verdict_ab, verdict_ba)
-            votes.append(vote)
+            # A self-contradiction is scored as a tie (the standard position-bias
+            # remedy) but kept visible, so a judge that just cannot tell the two
+            # responses apart shows up as exactly that in the report.
+            votes.append("tie" if vote == "inconsistent" else vote)
+            votes_raw.append(vote)
             judge_details.append({
                 "judge": judge.name, "verdict_ab": verdict_ab, "verdict_ba": verdict_ba, "vote": vote,
             })
-        record.update({"vote": majority_vote(votes), "judges": judge_details})
+        record.update({
+            "vote": majority_vote(votes),
+            "inconsistent": votes_raw.count("inconsistent") > len(judges) / 2,
+            "judges": judge_details,
+        })
         return record
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -472,13 +559,21 @@ def run_eval(
         for future in as_completed(futures):
             record = future.result()
             entry = stats[record["candidate"]]
-            entry.judged += 1
-            if record["vote"] == "win":
-                entry.wins += 1
-            elif record["vote"] == "loss":
-                entry.losses += 1
+            vote = record["vote"]
+            if vote == "unknown":
+                # No usable verdict: drop the pair instead of scoring it as a
+                # tie, which the threshold would read as "good enough".
+                entry.unknown += 1
             else:
-                entry.ties += 1
+                entry.judged += 1
+                if vote == "win":
+                    entry.wins += 1
+                elif vote == "loss":
+                    entry.losses += 1
+                else:
+                    entry.ties += 1
+            if record.get("inconsistent"):
+                entry.inconsistent += 1
             if judgments_log:
                 _append_jsonl(judgments_log, record)
 
@@ -512,6 +607,19 @@ def pick_recommendation(result: EvalResult) -> Optional[CandidateStats]:
     if not qualifying:
         return None
     return min(qualifying, key=lambda entry: entry.avg_cost_per_prompt)
+
+
+def is_conclusive(entry: CandidateStats, threshold: float) -> bool:
+    """Whether the sample actually supports the verdict, or merely suggests it.
+
+    The recommendation itself still runs on the observed rate -- requiring
+    significance would mean the default run (25 prompts) could never recommend
+    anything, since even a flawless 25/25 has a Wilson lower bound of 0.87
+    against a 0.9 threshold. So the verdict stands, but it is labelled: the
+    lower bound has to clear the threshold before it counts as established.
+    """
+    interval = entry.win_or_tie_ci
+    return interval is not None and interval[0] >= threshold
 
 
 def _append_jsonl(path: Path, record: Dict[str, Any]) -> None:
@@ -577,6 +685,31 @@ def render_report(result: EvalResult, generated_at: Optional[str] = None) -> str
             f"it wins or ties in {_fmt_rate(recommendation.win_or_tie_rate)} of your prompts at "
             f"{_fmt_cost(cost)} per 1000 prompts vs {_fmt_cost(baseline_cost)} for the baseline{savings}."
         )
+        interval = recommendation.win_or_tie_ci
+        if is_conclusive(recommendation, result.threshold):
+            lines += [
+                "",
+                f"This holds up statistically: even the pessimistic end of the 95% "
+                f"interval ({_fmt_rate(interval[0])}) clears the {result.threshold * 100:.0f}% bar.",
+            ]
+        else:
+            needed = prompts_needed_for(result.threshold)
+            lines += [
+                "",
+                f"**Treat this as provisional.** With {recommendation.judged} judged prompt(s) the "
+                f"true rate could be as low as {_fmt_rate(interval[0])} (95% interval: "
+                f"{_fmt_rate(interval[0])}-{_fmt_rate(interval[1])}), which is below the "
+                f"{result.threshold * 100:.0f}% bar. A flawless run needs at least ~{needed} prompts "
+                f"to settle this; re-run with `--limit {max(needed, 50)}`.",
+            ]
+        tie_share = recommendation.tie_share
+        if tie_share is not None and tie_share > 0.5:
+            lines += [
+                "",
+                f"**Careful: {_fmt_rate(tie_share)} of this verdict rests on ties, not wins.** A tie "
+                "counts as good enough, so a judge that cannot tell the responses apart produces a "
+                "downgrade recommendation for free. Check the judge before you trust this.",
+            ]
     else:
         lines.append(
             f"**No downgrade recommended.** No cheaper candidate reached the "
@@ -587,18 +720,44 @@ def render_report(result: EvalResult, generated_at: Optional[str] = None) -> str
         "",
         "## Results",
         "",
-        "| Candidate | Model | Win | Tie | Loss | Win+Tie | Cost / 1k prompts | Errors |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Candidate | Model | Win | Tie | Loss | Win+Tie (95% CI) | Cost / 1k prompts | Errors | Unusable |",
+        "|---|---|---|---|---|---|---|---|---|",
         f"| {baseline.candidate.name} (baseline) | {baseline.candidate.model} | - | - | - | - | "
-        f"{_fmt_cost(baseline_cost)} | {baseline.errors} |",
+        f"{_fmt_cost(baseline_cost)} | {baseline.errors} | - |",
     ]
     for entry in result.candidates:
         marker = " **<- verdict**" if entry is recommendation else ""
+        interval = entry.win_or_tie_ci
+        rate = _fmt_rate(entry.win_or_tie_rate)
+        if interval:
+            rate += f" ({_fmt_rate(interval[0])}-{_fmt_rate(interval[1])})"
         lines.append(
             f"| {entry.candidate.name}{marker} | {entry.candidate.model} | {entry.wins} | {entry.ties} | "
-            f"{entry.losses} | {_fmt_rate(entry.win_or_tie_rate)} | "
-            f"{_fmt_cost(entry.avg_cost_per_prompt)} | {entry.errors} |"
+            f"{entry.losses} | {rate} | "
+            f"{_fmt_cost(entry.avg_cost_per_prompt)} | {entry.errors} | {entry.unknown} |"
         )
+    judged_total = sum(entry.judged for entry in result.candidates)
+    ties_total = sum(entry.ties for entry in result.candidates)
+    inconsistent_total = sum(entry.inconsistent for entry in result.candidates)
+    unknown_total = sum(entry.unknown for entry in result.candidates)
+    if judged_total:
+        lines += [
+            "",
+            "## Judge health",
+            "",
+            f"- Ties: {ties_total}/{judged_total} ({_fmt_rate(ties_total / judged_total)} of judged "
+            "pairs). Ties count towards the threshold, so a high share means the verdict was handed "
+            "out rather than earned.",
+            f"- Self-contradictions: {inconsistent_total} pair(s) where the judge picked the same "
+            "position in both orderings. Scored as ties. A high number means the judge is reading "
+            "position, not quality.",
+        ]
+        if unknown_total:
+            lines.append(
+                f"- Unusable: {unknown_total} pair(s) produced no parseable verdict and were dropped "
+                "from the sample entirely (they are not counted as ties)."
+            )
+
     all_candidates = [baseline] + list(result.candidates)
     lines += [
         "",
@@ -642,7 +801,10 @@ def render_report(result: EvalResult, generated_at: Optional[str] = None) -> str
     if result.prompts_skipped:
         lines.append(f"- {result.prompts_skipped} prompt(s) skipped because the baseline model failed.")
     if result.parse_failures:
-        lines.append(f"- {result.parse_failures} judge verdict(s) could not be parsed and degraded to tie.")
+        lines.append(
+            f"- {result.parse_failures} judge call(s) returned nothing parseable. Where no judge "
+            "produced a usable verdict, the pair was dropped from the sample rather than scored."
+        )
     lines.append("")
     return "\n".join(lines)
 
@@ -656,8 +818,13 @@ def result_summary(result: EvalResult) -> Dict[str, Any]:
             "provider": entry.candidate.provider,
             "wins": entry.wins, "ties": entry.ties, "losses": entry.losses,
             "errors": entry.errors, "judged": entry.judged,
+            "inconsistent": entry.inconsistent, "unknown": entry.unknown,
             "win_or_tie_rate": entry.win_or_tie_rate,
+            "win_or_tie_ci95": entry.win_or_tie_ci,
+            "tie_share": entry.tie_share,
+            "conclusive": is_conclusive(entry, result.threshold),
             "avg_cost_per_prompt_usd": entry.avg_cost_per_prompt,
+            "price_source": entry.candidate.price_source,
         }
 
     return {
