@@ -37,6 +37,14 @@ kleinen Schritt bearbeiten, dann TASK.md/STATE.md nachziehen.
 - Kandidaten mit eigenem `base_url` duerfen NIE automatisch den
   Provider-API-Key erben (Key-Leak an fremde URLs; Regression-Test in
   tests/test_evaluate.py, Begruendung PLAN.md 4.5).
+- **Ein falscher Preis ist schlimmer als ein fehlender.** Das gesamte
+  Produkt ist das Geld-Verdikt; ein still danebenliegender Preis empfiehlt
+  das falsche Modell, ohne dass es jemand merkt. Ein unbekanntes Modell
+  bleibt daher preislos ("unknown") und wird vom Verdikt ausgeschlossen —
+  es erbt NIE den Preis eines aehnlich heissenden Nachbarn. Preise nie aus
+  dem eigenen Modellwissen ergaenzen (Trainingsstand veraltet still):
+  Live-Quelle oder Hersteller-Seite lesen, `TABLE_VERIFIED` nur nach
+  echtem Nachlesen hochsetzen. Begruendung PLAN.md 4.6.
 - **Sprache**: Code, Kommentare, Docstrings Englisch (Bestands-
   konvention). Steuerdateien (TASK/STATE/PLAN) Deutsch in ASCII (keine
   Umlaute). README aktuell Deutsch; Umstellung auf Englisch ist Task
@@ -46,8 +54,10 @@ kleinen Schritt bearbeiten, dann TASK.md/STATE.md nachziehen.
 
 ```bash
 cd <repo-root>
-python3 -m unittest discover -s tests    # muss gruen sein; Stand 2026-07-13: 55/55
+python3 -m unittest discover -s tests    # muss gruen sein; Stand 2026-07-14: 71/71
 python3 -m ki_council.evaluate <prompts> --config <cfg> --dry-run   # CLI-Smoke ohne Kosten
+# Der Dry-Run holt Live-Preise (Netz, kostenlos) und zeigt Preis + Quelle je
+# Kandidat. Ohne Netz: --no-live-prices (faellt auf die Tabelle zurueck).
 ```
 
 Vor jedem Commit:

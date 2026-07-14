@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 
-from ki_council.clients import GeminiClient, LLMError
+from ki_council.clients import GeminiClient, LLMError, OpenAIClient
 
 
 def _gemini_response(finish_reason, parts=None, usage=None):
@@ -71,6 +71,30 @@ class GeminiEmptyContentTests(unittest.TestCase):
         self.assertEqual(result.tokens_prompt, 5)
         self.assertEqual(result.tokens_completion, 7)
         self.assertEqual(result.tokens_used, 12)
+
+
+class OpenAIMaxTokensParamTests(unittest.TestCase):
+    """Reasoning models need max_completion_tokens; chat models need max_tokens.
+
+    Listing generations by hand let o4-mini fall through to the wrong parameter,
+    which fails every call. The o-series is matched by shape instead.
+    """
+
+    def _param_for(self, model):
+        client = OpenAIClient.__new__(OpenAIClient)
+        client.model = model
+        with mock.patch("ki_council.clients.load_config", return_value={}):
+            return client._max_tokens_param()
+
+    def test_reasoning_models_use_max_completion_tokens(self):
+        for model in ("gpt-5", "gpt-5.4-mini", "o1", "o3-mini", "o4-mini"):
+            with self.subTest(model=model):
+                self.assertEqual(self._param_for(model), "max_completion_tokens")
+
+    def test_chat_models_use_max_tokens(self):
+        for model in ("gpt-4o", "gpt-4o-mini", "gpt-4.1"):
+            with self.subTest(model=model):
+                self.assertEqual(self._param_for(model), "max_tokens")
 
 
 if __name__ == "__main__":

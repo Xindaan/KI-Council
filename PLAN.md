@@ -54,7 +54,7 @@ Flache Modulstruktur in `ki_council/`:
 | council.py | 240 | Alt-Feature: paralleler Fan-out + Freitext-Judge (judge_prompt.txt) |
 | cli.py | 160 | Alt-Feature CLI (`python -m ki_council.cli "Prompt"`) |
 | web.py | 830 | Alt-Feature Web-UI (`python -m ki_council.web`), Eval-Modus dort NICHT integriert (T-0009) |
-| **pricing.py** | 130 | Preistabelle USD/1M Tokens (Snapshot 2026-07), Longest-Prefix-Match, `model_prices`-Override, Localhost => 0 USD |
+| **pricing.py** | 300 | Preisaufloesung USD/1M Tokens mit Quellennachweis: Config > lokal (0 USD) > Live (models.dev, nur Erstanbieter) > gebuendelte Tabelle > unbekannt. Match nur exakt oder als datierter Snapshot — nie ueber Versionsgrenzen |
 | **promptsets.py** | 230 | Prompt-Quellen: JSONL, Ordner (.txt/.md), TXT (Zeile=Prompt), ChatGPT-Export (mapping-Nodes), Claude-Export (chat_messages); Dedupe, Min-Laenge 8, Limit |
 | **evaluate.py** | 560 | Eval-Kern + CLI: Kandidaten/Judges aus Config, Batch-Runner (ThreadPool), Blind-Pairwise-Judging, Aggregation, Verdikt, Markdown-Report, summary.json |
 
@@ -120,11 +120,33 @@ OpenAI-Key (wie Council).
    Provider-Key (sonst ginge der OpenAI-Key an fremde URLs); ohne
    expliziten `api_key` wird Platzhalter "local" gesendet (Ollama
    ignoriert ihn). Regression-Test vorhanden.
-6. **Preistabelle statisch mit Override**: stdlib-only heisst kein
-   Pricing-API-Call; Tabelle ist Snapshot (2026-07), Longest-Prefix-Match
-   (gpt-4o-mini-2024-07-18 -> gpt-4o-mini), `model_prices` ueberschreibt,
-   Localhost-Endpoints automatisch 0 USD. Unbekanntes Modell => Kosten
-   "unknown" => vom Verdikt ausgeschlossen.
+6. **Preise mit Herkunftsnachweis, Live-Quelle als Primaerquelle**
+   (revidiert 2026-07-14; die urspruengliche Entscheidung "statische
+   Tabelle reicht" war falsch — Begruendung unten).
+   Reihenfolge: Config-Override > lokaler Endpoint (0 USD) > Live-Quelle
+   (models.dev, `--prices-url`, abschaltbar mit `--no-live-prices`) >
+   gebuendelte Tabelle (nur Offline-Fallback, `TABLE_VERIFIED`-Datum) >
+   unbekannt. Jeder Preis traegt seine Quelle bis in den Report;
+   Tabellen-Preise und unbekannte Modelle erzeugen eine sichtbare Warnung.
+   Unbekanntes Modell => Kosten "unknown" => vom Verdikt ausgeschlossen.
+
+   **Warum die statische Tabelle falsch war:** Sie war als "Snapshot
+   2026-07" deklariert, stammte aber aus dem Trainingswissen des Modells
+   (Cutoff 2026-01) — sie kannte weder gpt-5.4/5.5/5.6 noch Opus 4.5-4.8,
+   Sonnet 5 oder Gemini 3.x. Schlimmer als die Luecke war das Verhalten
+   bei Luecken: der Longest-Prefix-Match lieferte einen Nachbarpreis statt
+   "unbekannt" (gpt-5.4-mini erbte den gpt-5-Flaggschiffpreis). Bei einem
+   Tool, dessen einziger Zweck das Geld-Verdikt ist, ist ein still
+   falscher Preis der schlimmstmoegliche Fehler.
+
+   **Fallstrick der Live-Quelle:** models.dev listet dasselbe Modell unter
+   jedem Reseller, der es weiterverkauft — claude-opus-4-8 lag am
+   2026-07-14 bei 16 Providern zwischen 0/0 und 6/30, waehrend der
+   Anthropic-Eintrag (5/25) exakt der Hersteller-Seite entsprach. Es
+   werden deshalb nur die Erstanbieter-Keys gelesen. Ein flacher Lookup
+   ueber alle Provider haette je nach Iterationsreihenfolge einen
+   Reseller-Preis gezogen, im Extremfall 0/0 — ein bezahltes Modell waere
+   als kostenlos ins Verdikt eingegangen.
 7. **Kostenkontrolle als Produkt-Feature**: `--limit` Default 25,
    `--dry-run` zeigt API-Call-Anzahl vor dem ersten echten Call.
    Judge-Calls skalieren mit Prompts x Kandidaten x Judges x 2.
@@ -149,8 +171,14 @@ OpenAI-Key (wie Council).
 - **Identitaets-Leak** (T-0010): Antworten wie "As Claude, ..." verraten
   dem Judge das Modell trotz Anonymisierung. Scrubbing pruefen.
 - **Web-UI kennt den Eval-Modus nicht** (T-0009).
-- **Preis-Snapshot altert**; Override existiert, aber Default-Tabelle
-  braucht gelegentliche Pflege (pricing.py, DEFAULT_PRICES).
+- **Judge-Familie = Baseline-Familie** verzerrt das Urteil
+  (Self-Preference-Bias). Fuer belastbare Laeufe einen Judge eines anderen
+  Anbieters waehlen; die README weist darauf hin, erzwungen wird es nicht.
+- **Live-Preisquelle ist eine Fremdabhaengigkeit** (T-0017): faellt sie
+  aus, greift die Tabelle (mit Warnung). Kandidaten hinter Gateways
+  (OpenRouter/Azure) bekommen derzeit keinen Live-Preis, weil nur
+  Erstanbieter-Keys gelesen werden.
+- **Sonnet-5-Einfuehrungspreis** laeuft am 2026-08-31 aus (T-0016).
 - **Kein echter API-Lauf bisher** (T-0012): alles nur mit Fakes + dry-run
   verifiziert. Erster Real-Lauf kostet Cents und braucht Keys.
 

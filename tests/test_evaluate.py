@@ -86,6 +86,34 @@ class CandidateConfigTests(unittest.TestCase):
         }
         self.assertEqual(build_candidates(config)[0].price, (1.0, 2.0))
 
+    def test_live_prices_are_used_and_their_source_is_recorded(self):
+        # Injected, never fetched: tests must not touch the network.
+        config = {
+            "openai_api_key": "sk-test",
+            "eval_candidates": [
+                {"name": "new", "provider": "openai", "model": "model-released-yesterday"},
+                {"name": "known", "provider": "openai", "model": "gpt-4o-mini"},
+            ],
+        }
+        live = {"model-released-yesterday": (1.0, 8.0)}
+        candidates = build_candidates(config, live)
+        self.assertEqual((candidates[0].price, candidates[0].price_source), ((1.0, 8.0), "live"))
+        self.assertEqual(candidates[1].price_source, "table")
+
+    def test_model_unknown_everywhere_has_no_price(self):
+        # It must stay unpriced rather than borrow a neighbour's price: a blank
+        # cost is honest, a wrong one silently corrupts the verdict.
+        config = {
+            "openai_api_key": "sk-test",
+            "eval_candidates": [
+                {"name": "mystery", "provider": "openai", "model": "gpt-9.9-ultra"},
+                {"name": "known", "provider": "openai", "model": "gpt-4o-mini"},
+            ],
+        }
+        candidate = build_candidates(config)[0]
+        self.assertIsNone(candidate.price)
+        self.assertEqual(candidate.price_source, "unknown")
+
     def test_duplicate_names_rejected(self):
         config = {
             "openai_api_key": "sk-test",

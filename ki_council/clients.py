@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import ssl
 import urllib.error
 import urllib.parse
@@ -14,6 +15,8 @@ from ki_council.config import get_setting, load_config
 # Constants
 DEFAULT_TIMEOUT = 300  # 5 minutes for large models and complex questions
 DEFAULT_MAX_TOKENS = 4096  # Higher default for detailed responses
+
+_O_SERIES = re.compile(r"^o\d")  # o1, o3, o3-mini, o4-mini, ...
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +194,10 @@ class OpenAIClient:
         if override:
             return override
         lower_model = self.model.lower()
-        if lower_model.startswith(("gpt-5", "o1", "o3")):
+        # The o-series is matched by shape ("o" + digit), not by listing each
+        # generation: an unlisted one (o4-mini) silently kept the old parameter
+        # and every call failed. Set OPENAI_MAX_TOKENS_PARAM to override.
+        if lower_model.startswith("gpt-5") or _O_SERIES.match(lower_model):
             return "max_completion_tokens"
         return "max_tokens"
 

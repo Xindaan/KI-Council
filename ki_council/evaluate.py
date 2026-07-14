@@ -34,7 +34,18 @@ from ki_council.clients import (
     OpenAIClient,
 )
 from ki_council.config import CONFIG_ENV_VAR, get_setting, load_config
-from ki_council.pricing import estimate_cost_usd, lookup_price, parse_price_overrides
+from ki_council.pricing import (
+    LIVE_PRICES_URL,
+    SOURCE_CONFIG,
+    SOURCE_TABLE,
+    SOURCE_UNKNOWN,
+    TABLE_VERIFIED,
+    PriceInfo,
+    estimate_cost_usd,
+    fetch_live_prices,
+    parse_price_overrides,
+    resolve_price,
+)
 from ki_council.promptsets import PromptItem, load_prompts
 
 logger = logging.getLogger(__name__)
@@ -65,6 +76,7 @@ class Candidate:
     api_key: str
     base_url: Optional[str] = None
     price: Optional[Tuple[float, float]] = None  # USD per 1M tokens (input, output)
+    price_source: str = SOURCE_UNKNOWN  # config | local | live | table | unknown
 
 
 @dataclass
@@ -121,7 +133,9 @@ def _provider_default_key(config: Dict[str, Any], provider: str) -> Optional[str
     return get_setting(config, settings[0], settings[1])
 
 
-def _candidate_from_entry(config: Dict[str, Any], entry: Dict[str, Any], overrides) -> Candidate:
+def _candidate_from_entry(
+    config: Dict[str, Any], entry: Dict[str, Any], overrides, live=None
+) -> Candidate:
     provider = str(entry.get("provider", "openai")).strip().lower()
     if provider not in PROVIDER_KEY_SETTINGS:
         raise EvalConfigError(
@@ -146,21 +160,23 @@ def _candidate_from_entry(config: Dict[str, Any], entry: Dict[str, Any], overrid
             f"No API key for candidate '{name}': set 'api_key' in the entry or "
             f"the {provider} provider key in the config."
         )
-    price: Optional[Tuple[float, float]] = None
     if "price_input" in entry and "price_output" in entry:
         try:
-            price = (float(entry["price_input"]), float(entry["price_output"]))
+            price_info = PriceInfo(
+                (float(entry["price_input"]), float(entry["price_output"])), SOURCE_CONFIG
+            )
         except (TypeError, ValueError):
             raise EvalConfigError(f"Invalid price_input/price_output for candidate '{name}'")
     else:
-        price = lookup_price(model, overrides, base_url)
+        price_info = resolve_price(model, overrides, base_url, live)
     return Candidate(
         name=name, provider=provider, model=model,
-        api_key=api_key, base_url=base_url, price=price,
+        api_key=api_key, base_url=base_url,
+        price=price_info.price, price_source=price_info.source,
     )
 
 
-def _fallback_candidates(config: Dict[str, Any], overrides) -> List[Candidate]:
+def _fallback_candidates(config: Dict[str, Any], overrides, live=None) -> List[Candidate]:
     """Derive candidates from the regular council provider config."""
     defaults = [
         ("openai", "OPENAI_MODEL", "openai_model", "gpt-4o-mini"),
@@ -176,23 +192,32 @@ def _fallback_candidates(config: Dict[str, Any], overrides) -> List[Candidate]:
         base_url = None
         if provider == "openai":
             base_url = get_setting(config, "OPENAI_BASE_URL", "openai_base_url")
+        price_info = resolve_price(model, overrides, base_url, live)
         candidates.append(Candidate(
             name=provider, provider=provider, model=model, api_key=key,
-            base_url=base_url, price=lookup_price(model, overrides, base_url),
+            base_url=base_url, price=price_info.price, price_source=price_info.source,
         ))
     return candidates
 
 
-def build_candidates(config: Dict[str, Any]) -> List[Candidate]:
-    """Build the candidate list from "eval_candidates" or the provider config."""
+def build_candidates(
+    config: Dict[str, Any], live: Optional[Dict[str, Tuple[float, float]]] = None
+) -> List[Candidate]:
+    """Build the candidate list from "eval_candidates" or the provider config.
+
+    Pass `live` to supply prices from the live source; without it, prices come
+    from the config and the bundled table only.
+    """
     overrides = parse_price_overrides(config)
     entries = config.get("eval_candidates")
     if entries:
         if not isinstance(entries, list):
             raise EvalConfigError("'eval_candidates' must be a JSON array")
-        candidates = [_candidate_from_entry(config, entry, overrides) for entry in entries]
+        candidates = [
+            _candidate_from_entry(config, entry, overrides, live) for entry in entries
+        ]
     else:
-        candidates = _fallback_candidates(config, overrides)
+        candidates = _fallback_candidates(config, overrides, live)
 
     if len(candidates) < 2:
         raise EvalConfigError(
@@ -504,6 +529,23 @@ def _fmt_cost(cost_per_prompt: Optional[float]) -> str:
     return f"${cost_per_prompt * 1000:.2f}"
 
 
+_PRICE_SOURCE_LABEL = {
+    "config": "your config (`model_prices`)",
+    "local": "local endpoint (free)",
+    "live": f"live ({LIVE_PRICES_URL})",
+    "table": f"bundled table (checked {TABLE_VERIFIED})",
+    "unknown": "**unknown** -- no cost computed",
+}
+
+
+def _fmt_price(candidate: Candidate) -> str:
+    """Render a candidate's price with its source, e.g. "$5.00/$25.00 (live)"."""
+    if candidate.price is None:
+        return "unknown"
+    price_in, price_out = candidate.price
+    return f"${price_in:g}/${price_out:g} ({candidate.price_source})"
+
+
 def _fmt_rate(rate: Optional[float]) -> str:
     return f"{rate * 100:.0f}%" if rate is not None else "n/a"
 
@@ -557,6 +599,24 @@ def render_report(result: EvalResult, generated_at: Optional[str] = None) -> str
             f"{entry.losses} | {_fmt_rate(entry.win_or_tie_rate)} | "
             f"{_fmt_cost(entry.avg_cost_per_prompt)} | {entry.errors} |"
         )
+    all_candidates = [baseline] + list(result.candidates)
+    lines += [
+        "",
+        "## Prices",
+        "",
+        "The verdict is only as good as these numbers. Check them.",
+        "",
+        "| Candidate | USD / 1M tokens (in/out) | Source |",
+        "|---|---|---|",
+    ]
+    for entry in all_candidates:
+        candidate = entry.candidate
+        price = (
+            "unknown" if candidate.price is None
+            else f"{candidate.price[0]:g} / {candidate.price[1]:g}"
+        )
+        lines.append(f"| {candidate.name} | {price} | {_PRICE_SOURCE_LABEL[candidate.price_source]} |")
+
     lines += [
         "",
         "## Caveats",
@@ -564,11 +624,21 @@ def render_report(result: EvalResult, generated_at: Optional[str] = None) -> str
         "- Verdicts come from LLM judges (anonymized, position-swapped"
         + (", jury of " + str(len(result.judges)) if len(result.judges) > 1 else "")
         + "). Judge bias is mitigated, not eliminated.",
-        "- Costs use the built-in price table (snapshot 2026-07) unless overridden via "
-        "`model_prices`; local endpoints count as $0. Cost per 1k prompts is extrapolated "
-        "from measured token usage on this prompt set.",
+        "- Cost per 1k prompts is extrapolated from measured token usage on this prompt "
+        "set; local endpoints count as $0.",
         "- Single-turn replay only: multi-turn behavior, tool use, and long-context work are not evaluated.",
     ]
+    if any(entry.candidate.price_source == SOURCE_TABLE for entry in all_candidates):
+        lines.append(
+            f"- **Some prices come from the bundled table**, last checked against the "
+            f"vendor pages on {TABLE_VERIFIED}. Prices change and models are released; "
+            f"verify them or set `model_prices` in the config."
+        )
+    if any(entry.candidate.price_source == SOURCE_UNKNOWN for entry in all_candidates):
+        lines.append(
+            "- **Some prices are unknown**, so those candidates have no cost and cannot "
+            "win on price. Set `price_input`/`price_output` for them to get a full verdict."
+        )
     if result.prompts_skipped:
         lines.append(f"- {result.prompts_skipped} prompt(s) skipped because the baseline model failed.")
     if result.parse_failures:
@@ -620,6 +690,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", help="Output directory (default: eval_out/<timestamp>).")
     parser.add_argument("--config", help="Path to a .ki-council.json file to use for this run.")
     parser.add_argument("--dry-run", action="store_true", help="Show the run plan (prompts, candidates, call count) without calling any API.")
+    parser.add_argument("--no-live-prices", action="store_true", help="Do not fetch current prices; use the config and the bundled table only.")
+    parser.add_argument("--prices-url", default=LIVE_PRICES_URL, help=f"Where to fetch current model prices (default: {LIVE_PRICES_URL}).")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging output.")
     return parser
 
@@ -639,7 +711,8 @@ def main() -> int:
     try:
         config = load_config()
         prompts = load_prompts(args.source, limit=args.limit)
-        candidates = build_candidates(config)
+        live = {} if args.no_live_prices else fetch_live_prices(args.prices_url)
+        candidates = build_candidates(config, live)
         baseline = pick_baseline(candidates, args.baseline, config)
         judges = load_judges(config)
     except Exception as exc:
@@ -656,8 +729,25 @@ def main() -> int:
         f"Jury:        " + ", ".join(judge.model for judge in judges),
         f"API calls:   {generation_calls} generations + {judge_calls} judge calls",
         f"Threshold:   {args.threshold * 100:.0f}% win-or-tie",
+        f"Prices:      " + ", ".join(
+            f"{c.name}={_fmt_price(c)}" for c in candidates
+        ),
     ]
     print("=== Run plan ===\n" + "\n".join(plan) + "\n", file=sys.stderr)
+    for candidate in candidates:
+        if candidate.price_source == SOURCE_UNKNOWN:
+            print(
+                f"Warning: no price for '{candidate.name}' ({candidate.model}). Its cost "
+                f"stays blank and it cannot win on price. Set price_input/price_output "
+                f"in the config to fix this.",
+                file=sys.stderr,
+            )
+        elif candidate.price_source == SOURCE_TABLE:
+            print(
+                f"Warning: price for '{candidate.name}' comes from the bundled table "
+                f"(checked {TABLE_VERIFIED}), not the live source -- it may be stale.",
+                file=sys.stderr,
+            )
     if args.dry_run:
         return 0
 

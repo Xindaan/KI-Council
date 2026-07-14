@@ -134,7 +134,7 @@ python -m ki_council.evaluate ~/Downloads/conversations.json --limit 25
 python -m ki_council.evaluate prompts.jsonl --dry-run
 
 # Baseline und Schwelle anpassen
-python -m ki_council.evaluate prompts/ --baseline gpt-4o --threshold 0.85
+python -m ki_council.evaluate prompts/ --baseline gross --threshold 0.85
 ```
 
 Weitere Prompt-Quellen: Ordner mit `.txt`/`.md`-Dateien (eine Datei = ein Prompt) oder `.txt`-Datei (eine Zeile = ein Prompt).
@@ -144,15 +144,15 @@ Kandidaten und Jury konfigurierst du in `.ki-council.json` (ohne `eval_candidate
 ```json
 {
   "eval_candidates": [
-    {"name": "big", "provider": "openai", "model": "gpt-4o"},
-    {"name": "mini", "provider": "openai", "model": "gpt-4o-mini"},
-    {"name": "haiku", "provider": "anthropic", "model": "claude-3-5-haiku-20241022"},
+    {"name": "gross", "provider": "openai", "model": "gpt-5.4"},
+    {"name": "mini", "provider": "openai", "model": "gpt-5.4-mini"},
+    {"name": "haiku", "provider": "anthropic", "model": "claude-haiku-4-5"},
     {"name": "local", "provider": "openai", "model": "llama3.1:8b", "base_url": "http://localhost:11434/v1"}
   ],
-  "eval_baseline": "big",
+  "eval_baseline": "gross",
   "eval_judges": [
-    {"provider": "openai", "model": "gpt-4o-mini"},
-    {"provider": "anthropic", "model": "claude-3-5-haiku-20241022"}
+    {"provider": "anthropic", "model": "claude-sonnet-5"},
+    {"provider": "gemini", "model": "gemini-3.5-flash"}
   ],
   "model_prices": {"mein-firmen-modell": [0.5, 1.5]}
 }
@@ -161,10 +161,30 @@ Kandidaten und Jury konfigurierst du in `.ki-council.json` (ohne `eval_candidate
 Hinweise:
 
 - **Ollama/lokale Modelle:** `provider: "openai"` mit `base_url: "http://localhost:11434/v1"` — lokale Endpoints werden automatisch mit 0 € gerechnet. Ein Kandidat mit eigenem `base_url` erhält bewusst **nicht** automatisch deinen Provider-Key (kein Key-Leak an fremde URLs); bei Bedarf `api_key` explizit setzen.
-- **Preise:** eingebaute Tabelle (Stand 2026-07), überschreibbar via `model_prices` (USD pro 1 Mio. Tokens, `[input, output]`).
-- **Kostenkontrolle:** `--limit` (Default 25) begrenzt die Promptzahl; `--dry-run` zeigt vorab die Anzahl der API-Calls.
+- **Jury:** Nimm möglichst einen Judge, der nicht aus derselben Familie wie deine Baseline stammt — Modelle bevorzugen tendenziell die eigenen Antworten.
+- **Kostenkontrolle:** `--limit` (Default 25) begrenzt die Promptzahl; `--dry-run` zeigt vorab die Anzahl der API-Calls und die Preise jedes Kandidaten.
 - **Ergebnisse:** `eval_out/<timestamp>/` mit `report.md` (Empfehlung + Tabelle), `summary.json`, `responses.jsonl`, `judgments.jsonl`.
 - **Judge-Prompt anpassen:** `ki_council/pairwise_judge_prompt.txt` nach `pairwise_judge_prompt.txt.local` kopieren (wird von Git ignoriert).
+
+#### Woher die Preise kommen
+
+Das Verdikt ist nur so gut wie die Preise, mit denen es rechnet — ein falscher
+Preis empfiehlt still das falsche Modell. Deshalb hat jeder Preis eine Quelle,
+und der Report weist sie aus. Reihenfolge:
+
+1. **Deine Config** (`model_prices` oder `price_input`/`price_output` am
+   Kandidaten) — schlägt alles andere.
+2. **Lokaler Endpoint** — kostet nichts, wird mit 0 gerechnet.
+3. **Live-Quelle** ([models.dev](https://models.dev)) — wird beim Lauf
+   abgerufen und kennt auch neu erschienene Modelle. Abschaltbar mit
+   `--no-live-prices`, andere Quelle via `--prices-url`.
+4. **Eingebaute Tabelle** — nur Offline-Fallback. Sie wurde zuletzt am
+   **2026-07-14** gegen die Hersteller-Seiten geprüft und weiß nichts über
+   später erschienene Modelle; der Report warnt, wenn ein Preis von hier stammt.
+
+Ist ein Modell nirgends bekannt, bleiben seine Kosten **leer** — es erbt
+bewusst nicht den Preis eines ähnlich heißenden Nachbarmodells. Ein fehlender
+Preis ist ehrlich, ein falscher wäre gefährlich.
 
 ## Neue Features
 
