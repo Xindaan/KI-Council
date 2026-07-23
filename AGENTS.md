@@ -8,18 +8,16 @@ blind gegen eine Baseline (Positions-Swap, optional Judge-Jury) und
 empfiehlt das guenstigste Modell, das gut genug ist — mit Ersparnis in USD.
 Pivot-Entscheidung und Wettbewerbsanalyse: siehe PLAN.md Abschnitt 1-2.
 
-## Pflichtlektuere vor der Arbeit (in dieser Reihenfolge)
+## Pflichtlektuere vor der Arbeit
 
-1. **STATE.md** — aktueller Stand + naechste 1-3 Schritte.
-2. **TASK.md** — einzige Aufgabenquelle (Doing/Next/Backlog/Done,
-   stabile IDs T-####). Neue Erkenntnisse SOFORT dort eintragen.
-3. **PLAN.md** — Strategie, Architektur, Design-Entscheidungen mit
-   Begruendung, bekannte Schwaechen. Entscheidungen dort nicht ohne
-   Not umstossen; Verworfenes (PLAN.md 2.) nicht wieder aufmachen.
+**PLAN.md** — Strategie, Architektur, Design-Entscheidungen mit
+Begruendung, bekannte Schwaechen. Entscheidungen dort nicht ohne Not
+umstossen; Verworfenes (PLAN.md 2.) nicht wieder aufmachen.
 
-Workflow "mach weiter": STATE.md + TASK.md lesen, mit einer Zeile
-"Weiter ab: <T-#### Kurztext>" antworten, genau diesen Task in einem
-kleinen Schritt bearbeiten, dann TASK.md/STATE.md nachziehen.
+Die `T-####`-Verweise in PLAN.md zeigen auf STATE.md/TASK.md — die
+Steuerdateien des Maintainers. Sie sind bewusst **nicht** Teil dieses
+Repos; ein Task-Verweis ohne auffindbaren Task ist also kein Fehler,
+sondern eine Notiz aus dem privaten Backlog.
 
 ## Harte Regeln
 
@@ -45,10 +43,9 @@ kleinen Schritt bearbeiten, dann TASK.md/STATE.md nachziehen.
   dem eigenen Modellwissen ergaenzen (Trainingsstand veraltet still):
   Live-Quelle oder Hersteller-Seite lesen, `TABLE_VERIFIED` nur nach
   echtem Nachlesen hochsetzen. Begruendung PLAN.md 4.6.
-- **Sprache**: Code, Kommentare, Docstrings Englisch (Bestands-
-  konvention). Steuerdateien (TASK/STATE/PLAN) Deutsch in ASCII (keine
-  Umlaute). README aktuell Deutsch; Umstellung auf Englisch ist Task
-  T-0005, nicht nebenbei erledigen.
+- **Sprache**: Code, Kommentare, Docstrings und README Englisch — das
+  ist die nach aussen sichtbare Flaeche. PLAN.md/AGENTS.md bleiben
+  Deutsch in ASCII (keine Umlaute).
 
 ## Verifikation & Definition of Done
 
@@ -62,10 +59,7 @@ python3 -m ki_council.evaluate <prompts> --config <cfg> --dry-run   # CLI-Smoke 
 
 Vor jedem Commit:
 1. Tests gruen, Pass-Count nennen.
-2. TASK.md: erledigte Tasks nach Done (mit Datum), neue Erkenntnisse
-   als neue T-#### (naechste freie ID, vorher grep).
-3. STATE.md: Stand-Datum, Status, Next Actions nachziehen.
-4. README bei nutzerbemerkbaren Aenderungen (CLI/Config/Verhalten).
+2. README bei nutzerbemerkbaren Aenderungen (CLI/Config/Verhalten).
 
 ## Code-Landkarte
 

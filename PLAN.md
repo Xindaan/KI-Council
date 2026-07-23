@@ -1,7 +1,9 @@
 # PLAN.md — KI-Council: Strategie, Architektur, Entscheidungen
 
-Ausfuehrliche Begruendungen. Aufgabenquelle ist TASK.md, Kurzstatus in
-STATE.md — dieses Dokument erklaert das WARUM und das WIE.
+Ausfuehrliche Begruendungen: dieses Dokument erklaert das WARUM und das
+WIE. Die `T-####`-Verweise zeigen auf den privaten Backlog des
+Maintainers und sind hier nur als Herkunftsnachweis einer Entscheidung
+zu lesen.
 
 ## 1. Mission (Pivot vom 2026-07-13)
 
@@ -185,11 +187,10 @@ OpenAI-Key (wie Council).
 ## 6. Verifikation
 
 ```bash
-cd <repo-root>/src/KI-Council
-python3 -m unittest discover -s tests        # Stand 2026-07-13: 55/55 OK
+cd <repo-root>
+python3 -m unittest discover -s tests        # Stand 2026-07-23: 97/97 OK
 python3 -m ki_council.evaluate prompts.jsonl --config cfg.json --dry-run
 ```
 
 Definition of Done pro Aenderung: Tests gruen (Pass-Count nennen),
-TASK.md-Bewegung, STATE.md-Update, README bei nutzerbemerkbaren
-Aenderungen. Details: ~/src/CLAUDE.md bzw. AGENTS.md.
+README bei nutzerbemerkbaren Aenderungen. Details: AGENTS.md.

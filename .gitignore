@@ -1,6 +1,10 @@
 # Configuration files with secrets
 .ki-council.json
 
+# Maintainer's local steering files (deliberately not part of the public repo)
+STATE.md
+TASK.md
+
 # Local judge prompt overrides (won't be overwritten by git)
 ki_council/judge_prompt.txt.local
 ki_council/pairwise_judge_prompt.txt.local

@@ -1,10 +1,10 @@
 # KI-Council
 
-Ein Tool mit CLI und Web-UI, das denselben Prompt an mehrere LLMs schickt und die Antworten anschließend durch ein weiteres LLM vergleichen lässt.
+A tool with a CLI and web UI that sends the same prompt to multiple LLMs and then has another LLM compare the responses.
 
 ## Setup
 
-Setze die API-Keys als Umgebungsvariablen:
+Set the API keys as environment variables:
 
 ```bash
 export OPENAI_API_KEY=...
@@ -12,7 +12,7 @@ export GEMINI_API_KEY=...
 export ANTHROPIC_API_KEY=...
 ```
 
-Optional kannst du Modelle, Base-URLs und Timeout konfigurieren:
+Optionally you can configure models, base URLs, and timeout:
 
 ```bash
 export OPENAI_MODEL=gpt-4o-mini
@@ -20,13 +20,13 @@ export GEMINI_MODEL=gemini-1.5-flash
 export ANTHROPIC_MODEL=claude-3-haiku-20240307
 export JUDGE_MODEL=gpt-4o-mini
 export OPENAI_MAX_TOKENS_PARAM=max_tokens
-export KI_COUNCIL_TIMEOUT=300  # Timeout in Sekunden (Standard: 300s / 5 Min)
-export KI_COUNCIL_JUDGE_TIMEOUT=600  # Judge-Timeout (Standard: 600s / 10 Min)
+export KI_COUNCIL_TIMEOUT=300  # Timeout in seconds (default: 300s / 5 min)
+export KI_COUNCIL_JUDGE_TIMEOUT=600  # Judge timeout (default: 600s / 10 min)
 ```
 
-### Alternative: lokale Konfigurationsdatei
+### Alternative: local configuration file
 
-Du kannst eine lokale Konfigurationsdatei `.ki-council.json` verwenden (bereits in `.gitignore`), um Keys und Modelle zu hinterlegen. Die Datei wird im aktuellen Arbeitsverzeichnis und in übergeordneten Verzeichnissen gesucht. Alternativ kannst du den Pfad explizit über `KI_COUNCIL_CONFIG` setzen. Kommentare (`//`, `#`, `/* ... */`), abschließende Kommas und typische Smart Quotes (z. B. „ “) werden beim Laden toleriert:
+You can use a local configuration file `.ki-council.json` (already in `.gitignore`) to store keys and models. The file is searched for in the current working directory and in parent directories. Alternatively, you can set the path explicitly via `KI_COUNCIL_CONFIG`. Comments (`//`, `#`, `/* ... */`), trailing commas, and typical smart quotes (e.g. „ ") are tolerated when loading:
 
 ```json
 {
@@ -48,15 +48,15 @@ Du kannst eine lokale Konfigurationsdatei `.ki-council.json` verwenden (bereits 
 }
 ```
 
-Falls du einen eigenen Zertifikatsspeicher brauchst (z. B. in einer Firmenumgebung), setze `KI_COUNCIL_CA_BUNDLE` oder `ca_bundle` in der Datei auf den Pfad zum CA‑Bundle. Für Debugging kannst du TLS‑Prüfungen mit `KI_COUNCIL_INSECURE=1` bzw. `"insecure_ssl": "true"` deaktivieren (nicht empfohlen).
+If you need your own certificate store (e.g. in a corporate environment), set `KI_COUNCIL_CA_BUNDLE` or `ca_bundle` in the file to the path of the CA bundle. For debugging, you can disable TLS checks with `KI_COUNCIL_INSECURE=1` or `"insecure_ssl": "true"` (not recommended).
 
-Hinweis: Einige OpenAI-Modelle (z. B. `gpt-5`/`o1`) erwarten `max_completion_tokens` statt `max_tokens`. Du kannst den Parameter über `OPENAI_MAX_TOKENS_PARAM` oder `"openai_max_tokens_param"` auf `max_completion_tokens` setzen.
+Note: some OpenAI models (e.g. `gpt-5`/`o1`) expect `max_completion_tokens` instead of `max_tokens`. You can set the parameter via `OPENAI_MAX_TOKENS_PARAM` or `"openai_max_tokens_param"` to `max_completion_tokens`.
 
-Umgebungsvariablen überschreiben Werte aus der Datei. Optional kannst du den Pfad zur Datei über `KI_COUNCIL_CONFIG` oder den CLI-Flag `--config` setzen.
+Environment variables override values from the file. Optionally you can set the path to the file via `KI_COUNCIL_CONFIG` or the CLI flag `--config`.
 
-## Nutzung
+## Usage
 
-Installiere das Paket einmalig im Projektordner (achte auf den abschließenden Punkt und führe es im Repo-Root aus):
+Install the package once in the project folder (note the trailing period and run it from the repo root):
 
 ```bash
 cd /pfad/zum/KI-Council
@@ -65,81 +65,81 @@ python3 -m pip install -e .
 
 ```bash
 python -m ki_council.web
-# Öffne dann http://127.0.0.1:8000 im Browser
+# Then open http://127.0.0.1:8000 in your browser
 ```
 
-Optionen für die Web-UI:
+Options for the web UI:
 ```bash
-# Mit Custom Host/Port
+# With a custom host/port
 python -m ki_council.web --host 0.0.0.0 --port 8080
 
-# Mit Custom Config
+# With a custom config
 python -m ki_council.web --config /pfad/zur/.ki-council.json
 ```
 
-### Web-Oberfläche
+### Web interface
 
-Starte eine einfache Web-UI für den Council:
+Start a simple web UI for the council:
 
 ```bash
 python -m ki_council.web --host 127.0.0.1 --port 8000
 ```
 
-Danach im Browser öffnen: `http://127.0.0.1:8000`
+Then open in the browser: `http://127.0.0.1:8000`
 
-Oder als JSON-Ausgabe:
+Or as JSON output:
 
 ```bash
 python -m ki_council.cli "Dein Prompt hier"
 ```
 
-Erweiterte CLI-Optionen:
+Advanced CLI options:
 
 ```bash
-# JSON-Ausgabe für programmatische Verarbeitung
+# JSON output for programmatic processing
 python -m ki_council.cli "Dein Prompt hier" --json
 
 # Nur bestimmte Provider verwenden
 python -m ki_council.cli "Dein Prompt hier" --providers openai,anthropic
 
-# Verbose-Modus für detaillierte Logs
+# Verbose mode for detailed logs
 python -m ki_council.cli "Dein Prompt hier" --verbose
 
-# Maximale Token-Anzahl anpassen
+# Adjust the maximum number of tokens
 python -m ki_council.cli "Dein Prompt hier" --max-tokens 1000
 
 # Benutzerdefinierte Konfigurationsdatei
 python -m ki_council.cli "Dein Prompt hier" --config /pfad/zur/.ki-council.json
 
-# Debug-Modus (zeigt Provider-Konfiguration)
+# Debug mode (shows provider configuration)
 python -m ki_council.cli "Dein Prompt hier" --debug
 
 # Kombinierte Optionen
 python -m ki_council.cli "Dein Prompt hier" --providers openai,gemini --verbose --max-tokens 2000
 ```
 
-### Downgrade-Advisor: Welches (günstigste) Modell reicht für deine Prompts?
+### Downgrade advisor: which (cheapest) model is enough for your prompts?
 
-Der Eval-Modus schickt einen Satz **deiner echten Prompts** an mehrere Kandidaten-Modelle, vergleicht jeden Kandidaten blind gegen ein Baseline-Modell (anonymisiert, mit Positions-Tausch gegen Judge-Bias, optional mit einer Jury aus mehreren Judges) und empfiehlt das günstigste Modell, das in mindestens 90% der Fälle gewinnt oder gleichzieht — inklusive Ersparnis-Schätzung.
+The eval mode sends a set of **your real prompts** to several candidate models, compares each candidate blindly against a baseline model (anonymized, with position swapping against judge bias, optionally with a jury of multiple judges), and recommends the cheapest model that wins or ties in at least 90% of cases — including a savings estimate.
 
 ```bash
-# Prompts aus einer JSONL-Datei (eine Zeile = {"prompt": "..."})
+# Prompts from a JSONL file (one line = {"prompt": "..."})
 python -m ki_council.evaluate prompts.jsonl
 
-# Direkt aus deinem ChatGPT- oder Claude-Datenexport (conversations.json):
+# Straight from your ChatGPT or Claude data export (conversations.json):
 # nimmt die erste User-Nachricht der letzten 25 Unterhaltungen
 python -m ki_council.evaluate ~/Downloads/conversations.json --limit 25
 
-# Erst den Plan ansehen (keine API-Calls, keine Kosten)
+# Look at the plan first (no API calls, no cost)
 python -m ki_council.evaluate prompts.jsonl --dry-run
 
-# Baseline und Schwelle anpassen
+# Adjust baseline and threshold
 python -m ki_council.evaluate prompts/ --baseline gross --threshold 0.85
 ```
 
-Weitere Prompt-Quellen: Ordner mit `.txt`/`.md`-Dateien (eine Datei = ein Prompt) oder `.txt`-Datei (eine Zeile = ein Prompt).
+Other prompt sources: a folder with `.txt`/`.md` files (one file = one prompt) or a `.txt` file (one line = one prompt).
 
-Kandidaten und Jury konfigurierst du in `.ki-council.json` (ohne `eval_candidates` werden die drei Council-Provider verwendet):
+You configure candidates and jury in `.ki-council.json` (without `eval_candidates` the three council providers are used):
 
 ```json
 {
@@ -158,85 +158,85 @@ Kandidaten und Jury konfigurierst du in `.ki-council.json` (ohne `eval_candidate
 }
 ```
 
-Hinweise:
+Notes:
 
-- **Ollama/lokale Modelle:** `provider: "openai"` mit `base_url: "http://localhost:11434/v1"` — lokale Endpoints werden automatisch mit 0 € gerechnet. Ein Kandidat mit eigenem `base_url` erhält bewusst **nicht** automatisch deinen Provider-Key (kein Key-Leak an fremde URLs); bei Bedarf `api_key` explizit setzen.
-- **Jury:** Nimm möglichst einen Judge, der nicht aus derselben Familie wie deine Baseline stammt — Modelle bevorzugen tendenziell die eigenen Antworten.
-- **Kostenkontrolle:** `--limit` (Default 25) begrenzt die Promptzahl; `--dry-run` zeigt vorab die Anzahl der API-Calls und die Preise jedes Kandidaten.
-- **Ergebnisse:** `eval_out/<timestamp>/` mit `report.md` (Empfehlung + Tabelle), `summary.json`, `responses.jsonl`, `judgments.jsonl`.
-- **Nicht alle Prompts sind gleich.** Vor dem Lauf sortiert ein Klassifizierer jeden Prompt in eine Kategorie (`coding`, `analysis`, `writing`, `factual`, `other`) und eine Schwierigkeit. Der Report zeigt die Rate **pro Kategorie** — sonst überdeckt gute Alltagsleistung ein Versagen bei genau der Arbeit, für die du das teure Modell hältst. Abschaltbar mit `--no-classify`, umschaltbar mit `--segment-by difficulty`. Kostet einen billigen Zusatz-Call pro Prompt.
-- **Faustregel Stichprobengröße:** Segmentierung frisst Stichprobe. Bei 25 Prompts auf vier Kategorien bleiben ~6 pro Segment — zu wenig für eine Aussage. Für belastbare Kategorien eher `--limit 100` und mehr.
-- **Wie belastbar ist das Verdikt?** Der Report weist ein 95-%-Konfidenzintervall aus und markiert die Empfehlung als **vorläufig**, wenn die Stichprobe sie nicht trägt (bei Schwelle 0,9 braucht es selbst bei fehlerfreiem Lauf ~35 Prompts). Der Abschnitt **Judge health** zeigt, wie viel des Verdikts auf Unentschieden statt auf Siegen beruht — ein Judge, der die Antworten nicht auseinanderhalten kann, verschenkt sonst Downgrade-Empfehlungen.
-- **Judge-Prompt anpassen:** `ki_council/pairwise_judge_prompt.txt` nach `pairwise_judge_prompt.txt.local` kopieren (wird von Git ignoriert).
+- **Ollama/local models:** `provider: "openai"` with `base_url: "http://localhost:11434/v1"` — local endpoints are automatically calculated at 0 €. A candidate with its own `base_url` deliberately does **not** automatically receive your provider key (no key leak to foreign URLs); set `api_key` explicitly if needed.
+- **Jury:** where possible, use a judge that is not from the same family as your baseline — models tend to favor their own answers.
+- **Cost control:** `--limit` (default 25) limits the number of prompts; `--dry-run` shows the number of API calls and the prices of each candidate in advance.
+- **Results:** `eval_out/<timestamp>/` with `report.md` (recommendation + table), `summary.json`, `responses.jsonl`, `judgments.jsonl`.
+- **Not all prompts are equal.** Before the run, a classifier sorts each prompt into a category (`coding`, `analysis`, `writing`, `factual`, `other`) and a difficulty. The report shows the rate **per category** — otherwise good everyday performance masks a failure at exactly the work you keep the expensive model for. Can be disabled with `--no-classify`, switched with `--segment-by difficulty`. Costs one cheap additional call per prompt.
+- **Rule of thumb for sample size:** segmentation eats into the sample. With 25 prompts across four categories, about 6 remain per segment — too few for a statement. For solid categories, use `--limit 100` or more.
+- **How robust is the verdict?** The report shows a 95% confidence interval and marks the recommendation as **preliminary** if the sample does not support it (at a threshold of 0.9, even a flawless run needs ~35 prompts). The **Judge health** section shows how much of the verdict rests on ties rather than wins — a judge that cannot tell the answers apart otherwise gives away downgrade recommendations.
+- **Customize the judge prompt:** copy `ki_council/pairwise_judge_prompt.txt` to `pairwise_judge_prompt.txt.local` (ignored by Git).
 
-#### Was ist bei dir knapp? (`--optimize`)
+#### What's scarce for you? (`--optimize`)
 
-Die Frage lautet immer „was ist das kleinste Modell, das für diese Arbeit
-reicht?" — aber *klein* heißt je nach Situation etwas anderes:
+The question is always "what is the smallest model that's enough for this
+work?" — but *small* means something different depending on the situation:
 
-| `--optimize` | Wenn deine knappe Ressource ist … | Typischer Fall |
+| `--optimize` | When your scarce resource is … | Typical case |
 |---|---|---|
-| `cost` (Default) | **Geld** — du zahlst pro Token | Ein Feature läuft über die API in Produktion |
-| `tokens` | **Kontingent** — du rennst ins Rate Limit | Coding im Abo; das große Modell frisst dein Fenster |
-| `latency` | **Zeit** — du wartest zu lange | Interaktives Arbeiten, kurze Prompts |
+| `cost` (default) | **Money** — you pay per token | A feature runs via the API in production |
+| `tokens` | **Quota** — you're hitting the rate limit | Coding on a subscription; the large model eats your window |
+| `latency` | **Time** — you're waiting too long | Interactive work, short prompts |
 
-Der Report zeigt **immer alle drei** Spalten, egal worauf du optimierst — ein
-Modell, das Geld spart und dafür die Wartezeit verdoppelt, ist ein schlechter
-Tausch, und den sollst du sehen. Nur das *Verdikt* richtet sich nach der von dir
-gewählten Währung: Bei `--optimize latency` gewinnt ein Modell nicht, bloß weil
-es billiger ist.
+The report **always shows all three** columns, regardless of what you
+optimize for — a model that saves money but doubles the wait time is a bad
+trade, and you should see that. Only the *verdict* follows the currency you
+chose: with `--optimize latency`, a model does not win just because it's
+cheaper.
 
-#### Woher die Preise kommen
+#### Where the prices come from
 
-Das Verdikt ist nur so gut wie die Preise, mit denen es rechnet — ein falscher
-Preis empfiehlt still das falsche Modell. Deshalb hat jeder Preis eine Quelle,
-und der Report weist sie aus. Reihenfolge:
+The verdict is only as good as the prices it calculates with — a wrong
+price silently recommends the wrong model. That's why every price has a
+source, and the report states it. Order:
 
-1. **Deine Config** (`model_prices` oder `price_input`/`price_output` am
-   Kandidaten) — schlägt alles andere.
-2. **Lokaler Endpoint** — kostet nichts, wird mit 0 gerechnet.
-3. **Live-Quelle** ([models.dev](https://models.dev)) — wird beim Lauf
-   abgerufen und kennt auch neu erschienene Modelle. Abschaltbar mit
-   `--no-live-prices`, andere Quelle via `--prices-url`.
-4. **Eingebaute Tabelle** — nur Offline-Fallback. Sie wurde zuletzt am
-   **2026-07-14** gegen die Hersteller-Seiten geprüft und weiß nichts über
-   später erschienene Modelle; der Report warnt, wenn ein Preis von hier stammt.
+1. **Your config** (`model_prices` or `price_input`/`price_output` on the
+   candidate) — beats everything else.
+2. **Local endpoint** — costs nothing, calculated at 0.
+3. **Live source** ([models.dev](https://models.dev)) — fetched during the
+   run and also knows newly released models. Can be disabled with
+   `--no-live-prices`, a different source via `--prices-url`.
+4. **Built-in table** — offline fallback only. It was last checked against
+   vendor pages on **2026-07-14** and knows nothing about models released
+   later; the report warns when a price comes from here.
 
-Ist ein Modell nirgends bekannt, bleiben seine Kosten **leer** — es erbt
-bewusst nicht den Preis eines ähnlich heißenden Nachbarmodells. Ein fehlender
-Preis ist ehrlich, ein falscher wäre gefährlich.
+If a model is not known anywhere, its costs remain **empty** — it
+deliberately does not inherit the price of a similarly named neighboring
+model. A missing price is honest, a wrong one would be dangerous.
 
-## Neue Features
+## New features
 
-### Robuste Fehlerbehandlung
-- Wenn ein Provider fehlschlägt, werden weiterhin Antworten von anderen Providern angezeigt
-- Fehlgeschlagene Provider werden in der Ausgabe mit Fehlermeldung gekennzeichnet
+### Robust error handling
+- If a provider fails, responses from other providers are still shown
+- Failed providers are marked in the output with an error message
 
-### Token-Tracking
-- Automatisches Tracking der verwendeten Tokens pro Provider
-- Anzeige von Prompt-, Completion- und Gesamt-Tokens in der Ausgabe
+### Token tracking
+- Automatic tracking of tokens used per provider
+- Display of prompt, completion, and total tokens in the output
 
-### Provider-Auswahl
-- Über `--providers` kannst du gezielt Provider auswählen
-- Beispiel: `--providers openai,anthropic` verwendet nur diese beiden
-- Auch über Umgebungsvariable `KI_COUNCIL_PROVIDERS` oder Config-Eintrag `"providers"` möglich
+### Provider selection
+- You can select providers specifically via `--providers`
+- Example: `--providers openai,anthropic` uses only these two
+- Also possible via environment variable `KI_COUNCIL_PROVIDERS` or config entry `"providers"`
 
 ### Logging
-- `--verbose` oder `-v` aktiviert detaillierte Logs zu API-Aufrufen
-- Hilfreich zum Debuggen und Verstehen des Ablaufs
+- `--verbose` or `-v` enables detailed logs of API calls
+- Helpful for debugging and understanding the flow
 
-### Anpassbarer Judge-Prompt
-- **Standard-Prompt:** `ki_council/judge_prompt.txt` (wird von Git verwaltet)
-- **Lokaler Override:** `ki_council/judge_prompt.txt.local` (wird von Git ignoriert, überschreibt Standard)
-- Verfügbare Platzhalter:
-  - `{prompt}` - Original-Prompt des Nutzers
-  - `{responses_text}` - Formatierte Antworten aller Provider
-  - `{judge_model}` - Name des Judge-Modells (z.B. "gpt-4o-mini")
-  - `{other_providers}` - Komma-getrennte Liste der anderen Provider (z.B. "anthropic, gemini")
-- **Tipp:** Kopiere `judge_prompt.txt` nach `judge_prompt.txt.local` für eigene Anpassungen, die nicht von Git überschrieben werden
+### Customizable judge prompt
+- **Default prompt:** `ki_council/judge_prompt.txt` (managed by Git)
+- **Local override:** `ki_council/judge_prompt.txt.local` (ignored by Git, overrides default)
+- Available placeholders:
+  - `{prompt}` - original prompt from the user
+  - `{responses_text}` - formatted responses of all providers
+  - `{judge_model}` - name of the judge model (e.g. "gpt-4o-mini")
+  - `{other_providers}` - comma-separated list of the other providers (e.g. "anthropic, gemini")
+- **Tip:** copy `judge_prompt.txt` to `judge_prompt.txt.local` for your own customizations that are not overwritten by Git
 
-## Hinweise
+## Notes
 
-- Für die Vergleichsanalyse wird standardmäßig OpenAI genutzt. Setze `JUDGE_API_KEY`, wenn du dafür einen separaten Key verwenden möchtest.
-- Ohne gesetzte API-Keys läuft das Tool nicht.
-- Token-Informationen werden nur angezeigt, wenn die Provider-APIs diese zurückliefern.
+- OpenAI is used by default for the comparison analysis. Set `JUDGE_API_KEY` if you want to use a separate key for this.
+- The tool will not run without API keys set.
+- Token information is only displayed if the provider APIs return it.
