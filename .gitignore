@@ -35,3 +35,6 @@ ENV/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Instanzdaten zur Veroeffentlichung — nie oeffentlich
+.private/
