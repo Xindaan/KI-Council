@@ -1098,7 +1098,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help=f"Max tokens per response (default: {DEFAULT_MAX_TOKENS}).")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help=f"Parallel API calls (default: {DEFAULT_WORKERS}).")
     parser.add_argument("--out", help="Output directory (default: eval_out/<timestamp>).")
-    parser.add_argument("--config", help="Path to a .ki-council.json file to use for this run.")
+    parser.add_argument("--config", help="Path to a config file to use for this run.")
     parser.add_argument("--dry-run", action="store_true", help="Show the run plan (prompts, candidates, call count) without calling any API.")
     parser.add_argument("--optimize", choices=(OPTIMIZE_COST, OPTIMIZE_TOKENS, OPTIMIZE_LATENCY), default=OPTIMIZE_COST, help="What is scarce for you: money (cost), rate-limit quota (tokens), or waiting time (latency). Default: cost.")
     parser.add_argument("--no-classify", action="store_true", help="Skip prompt classification; report one overall rate instead of a breakdown by kind of prompt.")

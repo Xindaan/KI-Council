@@ -30,8 +30,11 @@ sondern eine Notiz aus dem privaten Backlog.
   judge_fn=...)`). Fakes siehe tests/test_evaluate.py.
 - **Keine echten API-Calls ohne explizites Nutzer-OK** — echte Laeufe
   kosten Geld. Fuer Verifikation ohne Kosten: `--dry-run`.
-- **Secrets**: .ki-council.json ist gitignored und bleibt es. Nie Keys
-  in Code, Tests oder Fixtures.
+- **Secrets**: Die echte Config liegt ausserhalb des Repos unter
+  `~/.config/ki-council/config.json` (Suchreihenfolge siehe README).
+  `.ki-council.json` bleibt trotzdem gitignored — eine projektlokale
+  Override-Datei ist weiterhin moeglich. Nie Keys in Code, Tests oder
+  Fixtures.
 - Kandidaten mit eigenem `base_url` duerfen NIE automatisch den
   Provider-API-Key erben (Key-Leak an fremde URLs; Regression-Test in
   tests/test_evaluate.py, Begruendung PLAN.md 4.5).

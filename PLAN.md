@@ -52,7 +52,7 @@ Flache Modulstruktur in `ki_council/`:
 | Modul | Zeilen ca. | Verantwortung |
 |---|---|---|
 | clients.py | 470 | HTTP-Clients (urllib): OpenAIClient (auch OpenAI-kompatibel/Ollama via base_url), GeminiClient, AnthropicClient. `generate(prompt, max_tokens) -> LLMResponse` mit Token-Zaehlung |
-| config.py | 130 | .ki-council.json (tolerantes JSON: Kommentare, trailing commas, Smart Quotes) + Env-Vars; Env schlaegt Datei |
+| config.py | 175 | Config-Datei (tolerantes JSON: Kommentare, trailing commas, Smart Quotes) + Env-Vars; Env schlaegt Datei. Suchreihenfolge: `KI_COUNCIL_CONFIG`/`--config` -> `.ki-council.json` in cwd/Parents -> `~/.config/ki-council/config.json` (bzw. `$XDG_CONFIG_HOME`) |
 | council.py | 240 | Alt-Feature: paralleler Fan-out + Freitext-Judge (judge_prompt.txt) |
 | cli.py | 160 | Alt-Feature CLI (`python -m ki_council.cli "Prompt"`) |
 | web.py | 830 | Alt-Feature Web-UI (`python -m ki_council.web`), Eval-Modus dort NICHT integriert (T-0009) |

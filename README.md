@@ -24,9 +24,24 @@ export KI_COUNCIL_TIMEOUT=300  # Timeout in seconds (default: 300s / 5 min)
 export KI_COUNCIL_JUDGE_TIMEOUT=600  # Judge timeout (default: 600s / 10 min)
 ```
 
-### Alternative: local configuration file
+### Alternative: configuration file
 
-You can use a local configuration file `.ki-council.json` (already in `.gitignore`) to store keys and models. The file is searched for in the current working directory and in parent directories. Alternatively, you can set the path explicitly via `KI_COUNCIL_CONFIG`. Comments (`//`, `#`, `/* ... */`), trailing commas, and typical smart quotes (e.g. „ ") are tolerated when loading:
+Instead of environment variables you can keep keys and models in a JSON file. It is looked up in this order, first hit wins:
+
+1. The path in `KI_COUNCIL_CONFIG`, or the CLI flag `--config`
+2. `.ki-council.json` in the current working directory or any parent directory
+3. `config.json` in the per-user config directory — `$XDG_CONFIG_HOME/ki-council/` if that variable is set, otherwise `~/.config/ki-council/`. The name `.ki-council.json` is accepted there as well
+
+Step 3 is the recommended place for personal keys: the file lives outside the repository, so it cannot be committed by accident. Step 2 stays available for a project-specific override and is already listed in `.gitignore`.
+
+Since the file holds API keys, keep it readable only by yourself:
+
+```bash
+mkdir -p ~/.config/ki-council && chmod 700 ~/.config/ki-council
+chmod 600 ~/.config/ki-council/config.json
+```
+
+Comments on their own line (`//`, `#`, `/* ... */`), trailing commas, and typical smart quotes (e.g. „ ") are tolerated when loading:
 
 ```json
 {
@@ -74,7 +89,7 @@ Options for the web UI:
 python -m ki_council.web --host 0.0.0.0 --port 8080
 
 # With a custom config
-python -m ki_council.web --config /pfad/zur/.ki-council.json
+python -m ki_council.web --config ~/.config/ki-council/config.json
 ```
 
 ### Web interface
@@ -109,7 +124,7 @@ python -m ki_council.cli "Dein Prompt hier" --verbose
 python -m ki_council.cli "Dein Prompt hier" --max-tokens 1000
 
 # Benutzerdefinierte Konfigurationsdatei
-python -m ki_council.cli "Dein Prompt hier" --config /pfad/zur/.ki-council.json
+python -m ki_council.cli "Dein Prompt hier" --config ~/.config/ki-council/config.json
 
 # Debug mode (shows provider configuration)
 python -m ki_council.cli "Dein Prompt hier" --debug
@@ -139,7 +154,7 @@ python -m ki_council.evaluate prompts/ --baseline gross --threshold 0.85
 
 Other prompt sources: a folder with `.txt`/`.md` files (one file = one prompt) or a `.txt` file (one line = one prompt).
 
-You configure candidates and jury in `.ki-council.json` (without `eval_candidates` the three council providers are used):
+You configure candidates and jury in your config file (see above; without `eval_candidates` the three council providers are used):
 
 ```json
 {

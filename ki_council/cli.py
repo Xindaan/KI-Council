@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        help="Path to a .ki-council.json file to use for this run.",
+        help="Path to a config file to use for this run.",
     )
     parser.add_argument(
         "--providers",

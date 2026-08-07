@@ -809,7 +809,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the KI-Council web UI.")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000)")
-    parser.add_argument("--config", help="Path to a .ki-council.json file to use for this run.")
+    parser.add_argument("--config", help="Path to a config file to use for this run.")
     return parser
 
 
