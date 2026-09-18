@@ -21,6 +21,16 @@ sondern eine Notiz aus dem privaten Backlog.
 
 ## Harte Regeln
 
+- **Diese Arbeitsregeln gehoeren dem Maintainer, nicht dem Agenten.**
+  "Pflichtlektuere vor der Arbeit", "Harte Regeln", "Verifikation & Definition
+  of Done" (und die DoD, die PLAN.md wiederholt) nicht umformulieren, aufweichen,
+  umstrukturieren oder verschieben, ausser der Maintainer verlangt es im
+  aktuellen Task — sonst im Gespraech vorschlagen. Diese Abschnitte spiegeln
+  Konventionen, die ueber die Repos des Maintainers geteilt werden; ein lokales
+  Umschreiben forkt sie still. Am 13.09.2026 tat ein Agent genau das,
+  uncommittet und ungefragt, in drei Repos gleichzeitig: "ein Commit, der Code
+  aendert aber TASK.md/STATE.md nicht, ist in der Regel falsch" wurde optional,
+  und Doku-Arbeit von den Test-Suites ausgenommen. Zurueckgedreht 18.09.2026.
 - **Nur Python-Standardbibliothek.** Keine neuen Dependencies — das ist
   Produkt-Feature (laeuft in gesperrten Firmenumgebungen), nicht Nostalgie.
   urllib statt requests/httpx, unittest statt pytest, ThreadPool statt
